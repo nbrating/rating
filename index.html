@@ -356,6 +356,30 @@
     0% { transform: scale(1); opacity: .85; }
     100% { transform: scale(1.3); opacity: 0; }
   }
+  /* 殴打按钮：红色系呼吸 */
+  .fab-hit {
+    bottom: 96px; background: linear-gradient(135deg, rgba(255,95,109,.22), rgba(255,95,109,.1));
+    border: 1px solid rgba(255,95,109,.5); color: #ff8a94;
+  }
+  .fab-hit::after { border-color: rgba(255,95,109,.55); animation: hitPulse 1.6s ease-out infinite; }
+  @keyframes hitPulse {
+    0% { transform: scale(1); opacity: .8; }
+    100% { transform: scale(1.35); opacity: 0; }
+  }
+  .hit-item {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 12px; margin-bottom: 8px; border-radius: 12px;
+    background: var(--card); border: 1px solid var(--line); cursor: pointer;
+    transition: border-color .15s;
+  }
+  .hit-item:active { border-color: rgba(255,95,109,.6); }
+  .hit-item .hit-name { font-size: 15px; font-weight: 800; }
+  .hit-item .hit-score { font-size: 12px; color: var(--muted); }
+  .hit-item .hit-btn {
+    font-size: 12px; font-weight: 800; color: #ff8a94;
+    border: 1px solid rgba(255,95,109,.5); border-radius: 999px; padding: 5px 12px;
+    background: rgba(255,95,109,.12);
+  }
 
   /* 公告条：金色静态流光（去掉滚动动画，省性能） */
   .notice-bar {
@@ -648,6 +672,17 @@
 
   <!-- ===== 悬浮加人按钮 ===== -->
   <button class="fab" id="fabAdd"><span style="font-size:22px;line-height:1;">＋</span> 添加人物</button>
+  <button class="fab fab-hit" id="fabHit">👊 殴打 <span id="hitCount" style="display:inline-block;min-width:16px;text-align:center;">0</span></button>
+
+  <!-- ===== 殴打弹窗 ===== -->
+  <div class="mask" id="hitMask">
+    <div class="modal">
+      <h3>👊 选一个角色殴打</h3>
+      <div class="tip">打他一顿，对方总分 <b style="color:#ff5f6d;">-2</b>！（赢得一场比赛获得一次殴打机会）</div>
+      <div id="hitList" style="max-height:52vh;overflow:auto;margin:10px 0;"></div>
+      <div class="row2"><button class="btn ghost" id="hitCancel">算了</button></div>
+    </div>
+  </div>
 
   <!-- ===== 底部：私信 + 创作者入口 ===== -->
   <div class="creator-entry">
@@ -823,6 +858,7 @@
       <div class="tab" data-tab="adds">推荐记录</div>
       <div class="tab" data-tab="msgs">私信</div>
       <div class="tab" data-tab="games">🎮 游戏战绩</div>
+      <div class="tab" data-tab="hits">👊 殴打记录</div>
     </div>
     <div id="adminLogs"></div>
     <button class="btn ok" id="adminPwd" style="width:100%;margin-bottom:10px;">修改创作者密码</button>
@@ -956,6 +992,7 @@ function load() {
       d.adjustments = d.adjustments || [];                          // 创作者手动调分记录
       d.gameCfg = d.gameCfg || { enabled: true, burst: 60, fail: 20, eBurst: 40, eSpeed: 0, draw: 55 };
       d.gameLogs = d.gameLogs || [];                                // 游戏战绩记录
+      d.hits = d.hits || [];                                        // 殴打记录
       // 旧版"待审核"机制已移除：历史 pending 人物直接上架
       (d.people || []).forEach(function (p) { if (p.status === 'pending') p.status = 'approved'; });
       return d;
@@ -998,6 +1035,7 @@ function normalizeState(d) {
   d.adjustments = d.adjustments || [];
   d.gameCfg = d.gameCfg || { enabled: true, burst: 60, fail: 20, eBurst: 40, eSpeed: 0, draw: 55 };
   d.gameLogs = d.gameLogs || [];
+  d.hits = d.hits || [];
   d.people = (d.people || []).map(function (p) { if (p.status === 'pending') p.status = 'approved'; return p; });
   if (!d.ratings) d.ratings = [];
   if (!d.comments) d.comments = [];
@@ -1063,9 +1101,9 @@ function scheduleCloudSave() {
   if (CLOUD.timer) clearTimeout(CLOUD.timer);
   CLOUD.timer = setTimeout(doCloudSave, 800);
 }
-/* 自动清理：评论最新 50 条、评级 300 条、私信 100 条、游戏战绩 50 条、调分记录 50 条（只删最旧的） */
+/* 自动清理：评论最新 50 条、评级 300 条、私信 100 条、游戏战绩 50 条、调分记录 50 条、殴打记录 100 条（只删最旧的） */
 function trimState() {
-  var LIM = { comments: 50, ratings: 300, messages: 100, gameLogs: 50, adjustments: 50 };
+  var LIM = { comments: 50, ratings: 300, messages: 100, gameLogs: 50, adjustments: 50, hits: 100 };
   Object.keys(LIM).forEach(function (k) {
     if ((state[k] || []).length > LIM[k]) state[k] = state[k].slice(-LIM[k]);
   });
@@ -1112,10 +1150,11 @@ function getMe() {
       if (m.addQuota === undefined) m.addQuota = 3;       // 添加人物次数（基础3次）
       if (m.bonusVotes === undefined) m.bonusVotes = 0;    // 游戏赢得的额外评级权
       if (m.wins === undefined) m.wins = 0;                // 对战胜利场数
+      if (m.hitQuota === undefined) m.hitQuota = 0;        // 殴打机会（胜利+1）
       return m;
     }
   } catch (e) {}
-  return { id: 'u' + Math.random().toString(36).slice(2, 8), nick: '', addQuota: 3, bonusVotes: 0, wins: 0 };
+  return { id: 'u' + Math.random().toString(36).slice(2, 8), nick: '', addQuota: 3, bonusVotes: 0, wins: 0, hitQuota: 0 };
 }
 function saveMe() { localStorage.setItem(CONFIG.meKey, JSON.stringify(me)); }
 
@@ -1148,6 +1187,7 @@ function personStats(pid) {
     dist[r.level] = (dist[r.level] || 0) + 1;
   });
   total += personAdjust(pid);   // 叠加创作者手动调分
+  total -= 2 * (state.hits || []).filter(function (h) { return h.personId === pid; }).length;  // 被殴打过 -2 分/次
   return { total: total, count: list.length, dist: dist, mine: list.find(function (r) { return r.userId === me.id; }) };
 }
 /* 手动调分合计：总分 = 评级分 + 创作者手动调分 */
@@ -1270,6 +1310,8 @@ function esc(s) {
 /* ---------- 页面刷新 ---------- */
 function refresh() {
   refreshNickShow();
+  var hc = document.getElementById('hitCount');
+  if (hc) hc.textContent = me.hitQuota || 0;
   renderNotice();
   renderPodium();
   renderList();
@@ -1430,6 +1472,40 @@ function openAddModal() {
   document.getElementById('addFile').value = '';
   openMask('addMask');
 }
+
+/* --- 殴打降分（游戏胜利获得机会，选择角色 -2 分） --- */
+document.getElementById('fabHit').addEventListener('click', function () {
+  if (!ensureNick(null)) return;
+  if (!(me.hitQuota > 0)) { toast('👊 打赢一局🏁小游戏，就能获得一次殴打机会！'); return; }
+  renderHitList();
+  openMask('hitMask');
+});
+function renderHitList() {
+  var box = document.getElementById('hitList');
+  var arr = state.people.filter(function (p) { return p.status !== 'pending'; });
+  if (!arr.length) { box.innerHTML = '<div class="empty">还没有人物</div>'; return; }
+  box.innerHTML = arr.map(function (p) {
+    return '<div class="hit-item" data-pid="' + p.id + '">' +
+      '<div><div class="hit-name">' + esc(p.name) + '</div>' +
+      '<div class="hit-score">当前 ' + personStats(p.id).total + ' 分 · 殴打后 ' + (personStats(p.id).total - 2) + ' 分</div></div>' +
+      '<div class="hit-btn">👊 打他</div></div>';
+  }).join('');
+  Array.prototype.forEach.call(box.querySelectorAll('.hit-item'), function (it) {
+    it.addEventListener('click', function () {
+      var pid = it.getAttribute('data-pid');
+      var p = state.people.find(function (x) { return x.id === pid; });
+      if (!p) return;
+      (state.hits = state.hits || []).push({ id: uid(), personId: pid, nick: me.nick || '匿名', time: now() });
+      me.hitQuota -= 1;
+      saveMe();
+      save();
+      closeMask('hitMask');
+      refresh();
+      toast('👊 你殴打了「' + p.name + '」！TA 被扣了 2 分');
+    });
+  });
+}
+document.getElementById('hitCancel').addEventListener('click', function () { closeMask('hitMask'); });
 document.getElementById('addFile').addEventListener('change', function () {
   var f = this.files[0];
   if (!f) return;
@@ -1639,6 +1715,11 @@ function renderLogs(tab) {
       return { id: g.id, who: g.nick, time: g.time,
         body: (g.win ? '🏆 赢了' : '😵 输了') + ' ' + esc(g.player) + ' vs ' + esc(g.enemy) + (g.comeback ? '（逆风翻盘！）' : '') };
     });
+  } else if (tab === 'hits') {
+    list = (state.hits || []).slice().reverse().map(function (h) {
+      return { id: h.id, who: h.nick, time: h.time,
+        body: '👊 殴打了「' + personName(h.personId) + '」，扣 2 分' };
+    });
   } else {
     list = state.messages.slice().reverse().map(function (m) {
       return { id: m.id, who: m.from, time: m.time,
@@ -1676,6 +1757,14 @@ document.getElementById('adminLogs').addEventListener('click', function (e) {
     state.comments = state.comments.filter(function (c) { return c.id !== id; });
   } else if (tab === 'msgs') {
     state.messages = state.messages.filter(function (m) { return m.id !== id; });
+  } else if (tab === 'games') {
+    state.gameLogs = (state.gameLogs || []).filter(function (g) { return g.id !== id; });
+  } else if (tab === 'hits') {
+    state.hits = (state.hits || []).filter(function (h) { return h.id !== id; });
+  } else if (tab === 'adds') {
+    state.people = state.people.filter(function (p) { return p.id !== id; });
+    state.ratings = state.ratings.filter(function (r) { return r.personId !== id; });
+    state.comments = state.comments.filter(function (c) { return c.personId !== id; });
   } else {
     // 删除人物：连带删掉它的评级和评论
     state.people = state.people.filter(function (p) { return p.id !== id; });
@@ -2385,6 +2474,7 @@ window.__openMsg = openMsgModal;
       me.addQuota = (me.addQuota || 0) + mult;
       me.bonusVotes = (me.bonusVotes || 0) + mult;
       me.wins = (me.wins || 0) + 1;
+      me.hitQuota = (me.hitQuota || 0) + 1;
       saveMe();
       document.getElementById('gameWinCount').textContent = '🏆 胜场 ' + me.wins;
       sfxWin(comeback);
