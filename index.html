@@ -1507,8 +1507,8 @@ function actDay(ts) {                            // 时间戳 → 日期串
 function settleActivity() {                        // 活动到期自动结算；结束后冻结 6 小时展示，再清除
   var a = state.activity;
   if (!a || !a.scores) return;
-  var now = Date.now();
-  if (a.enabled && a.endAt && now >= a.endAt) {
+  var tnow = Date.now();
+  if (a.enabled && a.endAt && tnow >= a.endAt) {
     var arr = Object.keys(a.scores).map(function (id) {
       return { id: id, n: a.scores[id].n || '匿名', s: a.scores[id].s || 0 };
     }).filter(function (x) { return x.s > 0; })
@@ -1522,9 +1522,9 @@ function settleActivity() {                        // 活动到期自动结算�
     a.enabled = false;
     a.endAt = null;
     a.over = true;                                // 本轮已结束：分数冻结保留
-    a.freezeUntil = now + 6 * 3600000;            // 冻结 6 小时展示最终结果
+    a.freezeUntil = tnow + 6 * 3600000;           // 冻结 6 小时展示最终结果
     save();
-  } else if (!a.enabled && a.freezeUntil && now >= a.freezeUntil) {
+  } else if (!a.enabled && a.freezeUntil && tnow >= a.freezeUntil) {
     a.scores = {};                                // 冻结期结束，清除本轮分数
     a.freezeUntil = null;
     save();
