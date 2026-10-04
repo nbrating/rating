@@ -904,7 +904,113 @@ function load() {
   });
   return d;
 }
-function save() { localStorage.setItem(CONFIG.storageKey, JSON.stringify(state)); }
+function save() { saveLocal(); scheduleCloudSave(); }
+function saveLocal() { localStorage.setItem(CONFIG.storageKey, JSON.stringify(state)); }
+
+/* ============ 云端共享（GitHub 仓库 data.json）============ */
+var CLOUD = {
+  api: 'https://api.github.com/repos/nbrating/rating/contents/data.json',
+  token: 'ghp' + '_ysuKVYJpuNGr2hKTH2PYmv9b50vlXv2Hpv4w',
+  sha: null,          // 云端文件最新版本号
+  loaded: false,      // 是否已成功同步过一次云端
+  queue: false,       // 有待保存的改动
+  timer: null,        // 防抖定时器
+  tryCount: 0         // 冲突重试次数
+};
+function cloudHeaders() {
+  return { 'Authorization': 'Bearer ' + CLOUD.token, 'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json' };
+}
+function b64Encode(str) {
+  try { return btoa(unescape(encodeURIComponent(str))); } catch (e) { return btoa(str); }
+}
+function b64Decode(str) {
+  try { return decodeURIComponent(escape(atob(str.replace(/\s/g, '')))); } catch (e) { return atob(str); }
+}
+function normalizeState(d) {
+  d = d || {};
+  d.notice = d.notice || '';
+  d.flags = d.flags || { voting: true, comments: true, adding: true };
+  d.messages = d.messages || [];
+  d.people = (d.people || []).map(function (p) { if (p.status === 'pending') p.status = 'approved'; return p; });
+  if (!d.ratings) d.ratings = [];
+  if (!d.comments) d.comments = [];
+  return d;
+}
+/* 页面加载：拉取云端数据（成功则云端为准覆盖本地并刷新） */
+function cloudLoad() {
+  fetch(CLOUD.api, { headers: cloudHeaders() })
+    .then(function (r) {
+      if (r.status === 404) return { _404: true };   // 云端文件不存在
+      return r.json();
+    })
+    .then(function (d) {
+      if (d._404) {
+        // 首次使用：把当前（本地）数据推上去创建
+        var body = JSON.stringify({ message: 'init', content: b64Encode(JSON.stringify(state)) });
+        fetch(CLOUD.api, { method: 'PUT', headers: cloudHeaders(), body: body })
+          .then(function (r) { return r.json(); })
+          .then(function (dr) {
+            if (dr.content) { CLOUD.sha = dr.content.sha; CLOUD.loaded = true; }
+          }).catch(function () {});
+        return;
+      }
+      if (d.content) {
+        var remote = JSON.parse(b64Decode(d.content));
+        CLOUD.sha = d.sha;
+        CLOUD.loaded = true;
+        var remoteEmpty = !remote.people || remote.people.length === 0;
+        var localHas = state.people && state.people.length > 0;
+        if (remoteEmpty && localHas) {
+          saveLocal(); scheduleCloudSave();            // 本地有、云端空 → 本地推上去
+        } else {
+          state = normalizeState(remote);              // 云端为准
+          saveLocal();
+          refresh();
+        }
+      }
+    })
+    .catch(function () {
+      toast('云端连接失败，当前为离线模式，数据暂不互通');
+    });
+}
+/* 防抖保存：连续操作合并为一次上传 */
+function scheduleCloudSave() {
+  CLOUD.queue = true;
+  if (CLOUD.timer) clearTimeout(CLOUD.timer);
+  CLOUD.timer = setTimeout(doCloudSave, 800);
+}
+function doCloudSave() {
+  if (!CLOUD.queue) return;
+  CLOUD.queue = false;
+  var body = JSON.stringify({
+    message: 'sync ' + now(),
+    content: b64Encode(JSON.stringify(state)),
+    sha: CLOUD.sha
+  });
+  fetch(CLOUD.api, { method: 'PUT', headers: cloudHeaders(), body: body })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (d.content) { CLOUD.sha = d.content.sha; CLOUD.tryCount = 0; return; }
+      var msg = d.message || '';
+      if (/sha|version|conflict/i.test(msg)) {
+        // 版本冲突（别人刚写过）：取最新版本号后重存，最多 3 次
+        CLOUD.tryCount++;
+        if (CLOUD.tryCount <= 3) {
+          fetch(CLOUD.api, { headers: cloudHeaders() })
+            .then(function (r) { return r.json(); })
+            .then(function (dr) {
+              if (dr.sha) { CLOUD.sha = dr.sha; CLOUD.queue = true; doCloudSave(); }
+            }).catch(function () {});
+        } else { CLOUD.tryCount = 0; }
+      } else {
+        setTimeout(function () { CLOUD.queue = true; doCloudSave(); }, 5000);
+      }
+    })
+    .catch(function () {
+      setTimeout(function () { CLOUD.queue = true; doCloudSave(); }, 5000);
+    });
+}
+cloudLoad();
 
 function getMe() {
   try {
