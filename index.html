@@ -803,12 +803,26 @@
       <div id="adjList" style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.7;"></div>
     </div>
 
+    <div class="notice-box" style="margin-bottom:12px;">
+      <div style="font-size:12px;font-weight:800;color:var(--gold);margin-bottom:8px;">🎮 游戏控制（创作者作弊面板）</div>
+      <div class="switch-row"><span>允许玩游戏</span><label class="switch"><input type="checkbox" id="swGame"><span class="slider"></span></label></div>
+      <div style="font-size:11px;color:var(--muted);padding:0 2px 8px;">关闭后表层游戏入口变灰，同学点不进去</div>
+      <div class="field" style="margin-bottom:6px;"><label>玩家爆发成功率（%）</label><input id="gcBurst" type="number" min="0" max="100" placeholder="默认 60（越小越难赢）"></div>
+      <div class="field" style="margin-bottom:6px;"><label>普通冲刺失败率（%）</label><input id="gcFail" type="number" min="0" max="100" placeholder="默认 20（越大越难赢）"></div>
+      <div class="field" style="margin-bottom:6px;"><label>机器人爆发概率（%）</label><input id="gcEBurst" type="number" min="0" max="100" placeholder="默认 40（越大机器人越猛）"></div>
+      <div class="field" style="margin-bottom:6px;"><label>机器人速度加成（可填负数）</label><input id="gcESpeed" type="number" placeholder="默认 0（如 0.3 机器人更快）"></div>
+      <div class="field" style="margin-bottom:6px;"><label>抽卡平衡触发率（%）</label><input id="gcDraw" type="number" min="0" max="100" placeholder="默认 55（越小越容易抽到悬殊对手）"></div>
+      <div class="row2"><button class="btn ok" id="gcSave">保存游戏设置</button></div>
+      <div style="font-size:11px;color:var(--muted);margin-top:6px;">调完保存，同学们下一次进游戏就按新参数来。</div>
+    </div>
+
     <div class="tabs">
       <div class="tab on" data-tab="rates">投票记录</div>
       <div class="tab" data-tab="comments">评论记录</div>
       <div class="tab" data-tab="people">人物管理</div>
       <div class="tab" data-tab="adds">推荐记录</div>
       <div class="tab" data-tab="msgs">私信</div>
+      <div class="tab" data-tab="games">🎮 游戏战绩</div>
     </div>
     <div id="adminLogs"></div>
     <button class="btn ok" id="adminPwd" style="width:100%;margin-bottom:10px;">修改创作者密码</button>
@@ -940,6 +954,8 @@ function load() {
       d.flags = d.flags || { voting: true, comments: true, adding: true };
       d.messages = d.messages || [];                                // 私信列表
       d.adjustments = d.adjustments || [];                          // 创作者手动调分记录
+      d.gameCfg = d.gameCfg || { enabled: true, burst: 60, fail: 20, eBurst: 40, eSpeed: 0, draw: 55 };
+      d.gameLogs = d.gameLogs || [];                                // 游戏战绩记录
       // 旧版"待审核"机制已移除：历史 pending 人物直接上架
       (d.people || []).forEach(function (p) { if (p.status === 'pending') p.status = 'approved'; });
       return d;
@@ -980,10 +996,24 @@ function normalizeState(d) {
   d.flags = d.flags || { voting: true, comments: true, adding: true };
   d.messages = d.messages || [];
   d.adjustments = d.adjustments || [];
+  d.gameCfg = d.gameCfg || { enabled: true, burst: 60, fail: 20, eBurst: 40, eSpeed: 0, draw: 55 };
+  d.gameLogs = d.gameLogs || [];
   d.people = (d.people || []).map(function (p) { if (p.status === 'pending') p.status = 'approved'; return p; });
   if (!d.ratings) d.ratings = [];
   if (!d.comments) d.comments = [];
   return d;
+}
+/* 游戏参数快捷读取（创作者后台可调） */
+function cfg() {
+  var c = state.gameCfg || {};
+  return {
+    enabled: c.enabled !== false,
+    burst: (c.burst != null ? c.burst : 60) / 100,
+    fail: (c.fail != null ? c.fail : 20) / 100,
+    eBurst: c.eBurst != null ? c.eBurst : 40,
+    eSpeed: c.eSpeed != null ? c.eSpeed : 0,
+    draw: (c.draw != null ? c.draw : 55) / 100
+  };
 }
 /* 页面加载：拉取云端数据（成功则云端为准覆盖本地并刷新） */
 function cloudLoad() {
@@ -1033,9 +1063,9 @@ function scheduleCloudSave() {
   if (CLOUD.timer) clearTimeout(CLOUD.timer);
   CLOUD.timer = setTimeout(doCloudSave, 800);
 }
-/* 自动清理：评论保留最新 50 条、评级记录保留最新 300 条、私信保留最新 100 条（只删最旧的，防止数据无限膨胀） */
+/* 自动清理：评论最新 50 条、评级 300 条、私信 100 条、游戏战绩 50 条、调分记录 50 条（只删最旧的） */
 function trimState() {
-  var LIM = { comments: 50, ratings: 300, messages: 100 };
+  var LIM = { comments: 50, ratings: 300, messages: 100, gameLogs: 50, adjustments: 50 };
   Object.keys(LIM).forEach(function (k) {
     if ((state[k] || []).length > LIM[k]) state[k] = state[k].slice(-LIM[k]);
   });
@@ -1466,9 +1496,33 @@ function openAdmin() {
   document.getElementById('swVote').checked = state.flags.voting;
   document.getElementById('swCmt').checked = state.flags.comments;
   document.getElementById('swAdd').checked = state.flags.adding;
+  document.getElementById('swGame').checked = !(state.gameCfg && state.gameCfg.enabled === false);
+  document.getElementById('gcBurst').value = (state.gameCfg && state.gameCfg.burst != null) ? state.gameCfg.burst : 60;
+  document.getElementById('gcFail').value = (state.gameCfg && state.gameCfg.fail != null) ? state.gameCfg.fail : 20;
+  document.getElementById('gcEBurst').value = (state.gameCfg && state.gameCfg.eBurst != null) ? state.gameCfg.eBurst : 40;
+  document.getElementById('gcESpeed').value = (state.gameCfg && state.gameCfg.eSpeed != null) ? state.gameCfg.eSpeed : 0;
+  document.getElementById('gcDraw').value = (state.gameCfg && state.gameCfg.draw != null) ? state.gameCfg.draw : 55;
   renderAdjPanel();
   renderLogs('rates');
 }
+/* --- 游戏设置保存 --- */
+document.getElementById('gcSave').addEventListener('click', function () {
+  var n = function (id, min, max, dft) {
+    var v = parseFloat(document.getElementById(id).value);
+    if (isNaN(v)) return dft;
+    return Math.max(min, Math.min(max, v));
+  };
+  state.gameCfg = state.gameCfg || {};
+  state.gameCfg.enabled = document.getElementById('swGame').checked;
+  state.gameCfg.burst = n('gcBurst', 0, 100, 60);
+  state.gameCfg.fail = n('gcFail', 0, 100, 20);
+  state.gameCfg.eBurst = n('gcEBurst', 0, 100, 40);
+  state.gameCfg.eSpeed = n('gcESpeed', -5, 5, 0);
+  state.gameCfg.draw = n('gcDraw', 0, 100, 55);
+  save();
+  refresh();
+  toast('游戏设置已保存 ✅');
+});
 /* --- 手动调分 --- */
 function renderAdjPanel() {
   var sel = document.getElementById('adjPerson');
@@ -1579,6 +1633,11 @@ function renderLogs(tab) {
     list = state.people.map(function (p) {
       return { id: p.id, who: p.addedBy, time: p.addedTime,
         body: '推荐了「' + p.name + '」' + (p.desc ? '：' + p.desc : '') };
+    });
+  } else if (tab === 'games') {
+    list = state.gameLogs.slice().reverse().map(function (g) {
+      return { id: g.id, who: g.nick, time: g.time,
+        body: (g.win ? '🏆 赢了' : '😵 输了') + ' ' + esc2(g.player) + ' vs ' + esc2(g.enemy) + (g.comeback ? '（逆风翻盘！）' : '') };
     });
   } else {
     list = state.messages.slice().reverse().map(function (m) {
@@ -1949,6 +2008,7 @@ window.__openMsg = openMsgModal;
   }
 
   document.getElementById('gameEntry').addEventListener('click', function () {
+    if (!cfg().enabled) { toast('🎮 游戏已关闭，等创作者开放'); return; }
     if (state.people.length < 2) { toast('至少需要 2 位人物才能比赛'); return; }
     if (!ensureNick({ type: 'game' })) return;
     startDraw();
@@ -1964,7 +2024,7 @@ window.__openMsg = openMsgModal;
     while (pRole && eRole && pRole.id === eRole.id && tries < 10) { eRole = pickRole(); tries++; }
     /* 平衡抽卡：双方实力差距过大时，有一定概率给弱方补抽一个更接近的选手 */
     var pT0 = statsOf(pRole.id).total, eT0 = statsOf(eRole.id).total;
-    if (Math.abs(pT0 - eT0) >= 16 && Math.random() < .55) {
+    if (Math.abs(pT0 - eT0) >= 16 && Math.random() < cfg().draw) {
       var pool = state.people.filter(function (p) { return p.name; });
       var isPWeak = pT0 < eT0;
       var oldT = isPWeak ? pT0 : eT0;
@@ -2185,7 +2245,7 @@ window.__openMsg = openMsgModal;
     if (a === 'spr') {
       if (p.stm >= 18) {
         p.stm -= 18;
-        if (Math.random() < .20) {
+        if (Math.random() < cfg().fail) {
           var d = base * .5;
           p.prog += d;
           runnerFx('p', 'slip');
@@ -2204,7 +2264,7 @@ window.__openMsg = openMsgModal;
     } else if (a === 'bst') {
       if (p.stm < 35) { log('sys', '爆发冲刺需要更多体力，先补补水吧'); refreshRace(); return; }
       p.stm -= 35;
-      if (Math.random() < .60) {
+      if (Math.random() < cfg().burst) {
         var d2 = base * rnd(3.8, 4.4);
         p.prog += d2;
         runnerFx('p', 'boost');
@@ -2239,7 +2299,7 @@ window.__openMsg = openMsgModal;
       e.stm = Math.min(100, e.stm + 30);
       e.cool.hyd = 2;
       log('en', '🤖 机器人边跑边补水，体力 +30');
-    } else if (e.stm >= 35 && Math.random() < (e.prog < p.prog ? .6 : .4)) {
+    } else if (e.stm >= 35 && Math.random() < (e.prog < p.prog ? cfg().eBurst / 100 : Math.max(0, (cfg().eBurst - 20) / 100))) {
       e.stm -= 35;
       if (Math.random() < .75) {
         e.prog += base * rnd(3.8, 4.4);
@@ -2253,7 +2313,7 @@ window.__openMsg = openMsgModal;
         infoPop('🤣 机器人摔了个四脚朝天！');
       }
     } else {
-      var d = base * rnd(1.25, 1.45);
+      var d = base * rnd(1.25 + cfg().eSpeed, 1.45 + cfg().eSpeed);
       e.prog += d;
       runnerFx('e', 'sprint');
       log('en', '🏃 机器人飞速奔跑，前进了 ' + Math.round(d) + ' 米');
@@ -2314,6 +2374,12 @@ window.__openMsg = openMsgModal;
       document.getElementById('gameAgain').addEventListener('click', resetRace);
       return;
     }
+    /* 战绩上报（云端共享，创作者后台可查；耍赖局不计） */
+    (state.gameLogs = state.gameLogs || []).push({
+      id: uid(), nick: me.nick || '匿名', win: win, comeback: comeback,
+      player: G.player.role.name, enemy: G.enemy.role.name, time: now()
+    });
+    save();
     if (win) {
       var mult = comeback ? 2 : 1;
       me.addQuota = (me.addQuota || 0) + mult;
