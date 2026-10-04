@@ -174,6 +174,12 @@
     border-radius: 10px; color: var(--text); font-size: 14px; padding: 0 12px; outline: none;
   }
   .field input:focus { border-color: var(--accent); }
+  .field textarea {
+    width: 100%; background: #1d222e; border: 1px solid var(--line);
+    border-radius: 10px; color: var(--text); font-size: 14px; padding: 10px 12px; outline: none;
+    resize: vertical; line-height: 1.6; box-sizing: border-box; font-family: inherit;
+  }
+  .field textarea:focus { border-color: var(--accent); }
   .upload-row { display: flex; gap: 8px; align-items: center; }
   .upload-row input[type=text] { flex: 1; }
   .file-btn {
@@ -264,6 +270,7 @@
     font-size: 15px; font-weight: 800; color: #ffd76b; line-height: 1.6;
     text-shadow: 0 0 10px rgba(255,179,0,.5);
     animation: noticePulse 2s ease-in-out infinite;
+    white-space: pre-line; word-break: break-word;
   }
   @keyframes noticePulse { 0%,100% { box-shadow: 0 0 6px rgba(255,179,0,.25); } 50% { box-shadow: 0 0 18px rgba(255,179,0,.6); } }
 
@@ -887,11 +894,24 @@
     </div>
 
     <div class="notice-box" id="adminNoticeBox">
-      <div class="field" style="margin-bottom:0;">
-        <label>置顶公告（显示在页面最上方，留空则不显示）</label>
-        <input id="noticeInput" placeholder="例如：今晚8点截止投票，抓紧！">
+      <div style="font-size:12px;font-weight:800;color:var(--gold);margin-bottom:6px;">📢 置顶公告（支持换行排版，显示在页面最上方，留空则不显示）</div>
+      <div id="noticePreview" style="background:rgba(255,255,255,.05);border:1px dashed var(--line);border-radius:8px;padding:8px 10px;font-size:12px;color:var(--text);white-space:pre-line;word-break:break-word;min-height:34px;margin-bottom:8px;">（暂无公告）</div>
+      <div class="row2"><button class="btn ok" id="noticeEditBtn">✏️ 编辑公告</button></div>
+    </div>
+
+    <!-- ===== 公告编辑弹窗（可换行排版） ===== -->
+    <div class="mask" id="noticeEditMask">
+      <div class="modal">
+        <h3>📢 编辑置顶公告</h3>
+        <div class="tip">支持多行排版，空行分段，显示在页面最上方</div>
+        <div class="field">
+          <textarea id="noticeEditInput" rows="7" placeholder="例如：今晚8点截止投票，抓紧！&#10;&#10;规则：每人每天可投5票"></textarea>
+        </div>
+        <div class="row2">
+          <button class="btn ghost" data-close="noticeEditMask">取消</button>
+          <button class="btn ok" id="noticeEditSave">保存公告</button>
+        </div>
       </div>
-      <div class="row2"><button class="btn ok" id="noticeSave">发布 / 更新公告</button></div>
     </div>
 
     <div id="adminSwitches" style="margin-bottom:12px;">
@@ -962,7 +982,7 @@
     <div class="modal" style="text-align:center;">
       <div style="font-size:40px;line-height:1;">📢</div>
       <h3 style="color:var(--gold);margin:10px 0 4px;">置顶公告</h3>
-      <div id="noticePopText" style="font-size:16px;font-weight:700;line-height:1.8;margin:10px 0 18px;word-break:break-word;"></div>
+      <div id="noticePopText" style="font-size:16px;font-weight:700;line-height:1.8;margin:10px 0 18px;word-break:break-word;white-space:pre-line;"></div>
       <button class="btn ok" id="noticePopClose" style="width:100%;">知道了</button>
     </div>
   </div>
@@ -2051,7 +2071,7 @@ function openAdmin(limited) {
   var totalScore = 0;
   state.people.forEach(function (p) { totalScore += personStats(p.id).total; });
   document.getElementById('stScore').textContent = totalScore;
-  document.getElementById('noticeInput').value = state.notice;
+  document.getElementById('noticePreview').textContent = state.notice || '（暂无公告）';
   document.getElementById('swVote').checked = state.flags.voting;
   document.getElementById('swCmt').checked = state.flags.comments;
   document.getElementById('swAdd').checked = state.flags.adding;
@@ -2132,10 +2152,16 @@ document.getElementById('adjClear').addEventListener('click', function () {
   renderAdjPanel();
   toast('已撤销对「' + (state.people.find(function (p) { return p.id === last.personId; }) || {}).name + '」的调分');
 });
-document.getElementById('noticeSave').addEventListener('click', function () {
-  state.notice = document.getElementById('noticeInput').value.trim().slice(0, 80);
+document.getElementById('noticeEditBtn').addEventListener('click', function () {
+  document.getElementById('noticeEditInput').value = state.notice || '';
+  openMask('noticeEditMask');
+});
+document.getElementById('noticeEditSave').addEventListener('click', function () {
+  state.notice = document.getElementById('noticeEditInput').value.trim().slice(0, 200);
   save();
   refresh();
+  closeMask('noticeEditMask');
+  document.getElementById('noticePreview').textContent = state.notice || '（暂无公告）';
   toast(state.notice ? '公告已发布' : '公告已清除');
 });
 function bindSwitch(id, key, tip) {
