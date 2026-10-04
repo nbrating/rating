@@ -1941,7 +1941,7 @@ window.__openMsg = openMsgModal;
     } else if (a === 'bst') {
       if (p.stm < 35) { log('sys', '爆发冲刺需要更多体力，先补补水吧'); refreshRace(); return; }
       p.stm -= 35;
-      if (Math.random() < .62) {
+      if (Math.random() < .60) {
         var d2 = base * rnd(3.8, 4.4);
         p.prog += d2;
         runnerFx('p', 'boost');
