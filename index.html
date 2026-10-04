@@ -1787,9 +1787,9 @@ window.__openMsg = openMsgModal;
     log('sys', '🏁 发令枪响！「' + G.player.role.name + '」vs「' + G.enemy.role.name + '」开跑！');
     log('sys', G.player.speed > G.enemy.speed ? '你的选手速度略快，优势在你！' : (G.player.speed < G.enemy.speed ? '对手比你强一点点，赢了他就是逆风翻盘！' : '双方速度相当，胜负全靠操作和运气！'));
     infoPop(G.player.speed > G.enemy.speed ? '🏁 开跑！你的选手略快！' : (G.player.speed < G.enemy.speed ? '🏁 开跑！对手略强，准备逆风翻盘！' : '🏁 开跑！势均力敌！'));
-    if (G.enemy.speed > G.player.speed) {
-      log('sys', '⚠️ 注意：对手比你强！如果你赢了，它可会发动一次「耍赖」技能重新比拼（仅一次，赢了就不算你赢，别让它跑掉！）');
-      infoPop('😤 提示：赢过强敌，它会耍赖重赛一次！');
+    if (G.player.speed !== G.enemy.speed) {
+      log('sys', '⚠️ 双方速度不同，角色更强的一方快输时，会发动一次「耍赖」技能：此局不算、重新比拼（每局限一次）！');
+      infoPop('😤 提示：强的一方快输时会耍赖重赛一次！');
     }
     setTimeout(openRps, 1000);
   }
@@ -1930,10 +1930,19 @@ window.__openMsg = openMsgModal;
     var base = p.speed;
     if (a === 'spr') {
       if (p.stm >= 18) {
-        var d = base * rnd(2, 2.4);
-        p.prog += d; p.stm -= 18;
-        runnerFx('p', 'sprint');
-        log('pl', '🏃 你全力冲刺！前进了 ' + Math.round(d) + ' 米');
+        p.stm -= 18;
+        if (Math.random() < .20) {
+          var d = base * .5;
+          p.prog += d;
+          runnerFx('p', 'slip');
+          log('pl', '🏃 冲刺时左脚绊右脚，只挪了 ' + Math.round(d) + ' 米！');
+          infoPop('🤦 冲刺失误！左脚绊右脚！');
+        } else {
+          var d = base * rnd(2, 2.4);
+          p.prog += d;
+          runnerFx('p', 'sprint');
+          log('pl', '🏃 你全力冲刺！前进了 ' + Math.round(d) + ' 米');
+        }
       } else {
         p.prog += base;
         log('pl', '😮‍💨 体力不足，只能匀速跑…前进了 ' + Math.round(base) + ' 米');
@@ -2013,15 +2022,24 @@ window.__openMsg = openMsgModal;
     var b = document.getElementById('gameBody');
     var pTotal = statsOf(G.player.role.id).total, eTotal = statsOf(G.enemy.role.id).total;
     var comeback = win && pTotal < eTotal;
-    if (win && !G.cheatUsed && G.enemy.speed > G.player.speed) {
-      /* 强方（机器人）输了，发动一次性耍赖技能：此局不算，重新比拼 */
+    /* 双向耍赖：角色更强的一方快输时，发动一次性技能“此局不算”重来（每局限一次） */
+    var cheater = null;
+    if (!G.cheatUsed) {
+      if (win && G.enemy.speed > G.player.speed) cheater = 'enemy';      /* 机器人强但输了 → 机器人耍赖 */
+      else if (!win && G.player.speed > G.enemy.speed) cheater = 'player'; /* 玩家强但输了 → 玩家耍赖 */
+    }
+    if (cheater) {
       G.cheatUsed = true;
-      document.getElementById('gameTitle').textContent = '😤 对方耍赖！';
+      document.getElementById('gameTitle').textContent = '😤 ' + (cheater === 'enemy' ? '对方耍赖！' : '你耍赖了！');
       b.innerHTML = '<div class="result-area result-lose">' +
         '<div class="result-emoji">😤</div>' +
-        '<div class="result-title" style="color:#ffb300;">对方等级略高，发动一次性技能！</div>' +
+        '<div class="result-title" style="color:#ffb300;">' + (cheater === 'enemy'
+          ? '对方等级略高，发动一次性技能！'
+          : '我方等级更高，发动一次性技能！') + '</div>' +
         '<div class="result-sub">此局不算！重新比拼！<br>' +
-        '（技能仅此一次，下次赢了就跑不掉了）</div>' +
+        (cheater === 'enemy'
+          ? '（技能仅此一次，下次赢了就跑不掉了）'
+          : '（机器人：喂！你居然耍赖！仅此一次啊！）') + '</div>' +
         '<div class="row2" style="margin-top:16px;">' +
         '<button class="btn ghost" id="gameExit">退出</button>' +
         '<button class="btn ok" id="gameAgain">👊 重新比拼</button></div></div>';
