@@ -1311,7 +1311,16 @@ function cloudLoad() {
           applyRemote(remote);
         })
         .catch(function () {
-          toast('云端连接失败，当前为离线模式，数据暂不互通');
+          // 本地有数据 → 静默离线展示本地，5 秒后自动重试云端（成功后自动恢复互通）
+          var hasLocal = state.people && state.people.length > 0;
+          if (!hasLocal) toast('云端连接失败，当前为离线模式，数据暂不互通');
+          if (!CLOUD.retryTimer) {
+            CLOUD.retryTimer = setTimeout(function () {
+              CLOUD.retryTimer = null;
+              CLOUD.cache = null;          // 强制重新拉取
+              cloudLoad();
+            }, 5000);
+          }
         });
     });
 }
@@ -1453,7 +1462,7 @@ function toast(msg) {
   var t = document.getElementById('toast');
   t.textContent = msg; t.classList.add('show');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(function () { t.classList.remove('show'); }, 1800);
+  toastTimer = setTimeout(function () { t.classList.remove('show'); t.textContent = ''; }, 1800);
 }
 
 /* ---------- 计算每个角色的总分和评级分布 ---------- */
