@@ -388,7 +388,19 @@
   }
   .game-entry .ge-left { font-size: 15px; font-weight: 900; color: var(--pink); white-space: nowrap; text-shadow: 0 0 12px rgba(255,95,162,.6); }
   .game-entry .ge-mid { flex: 1; font-size: 11px; color: var(--muted); line-height: 1.5; }
-  .game-entry .ge-go { font-size: 12px; font-weight: 800; color: var(--accent); border: 1px solid rgba(0,229,255,.4); border-radius: 20px; padding: 5px 10px; white-space: nowrap; background: rgba(0,229,255,.08); }
+  .game-entry .ge-go {
+    font-size: 16px; font-weight: 900; color: #1a1206; cursor: pointer;
+    background: linear-gradient(135deg, #ffd76b, #ffb300, #ff9500);
+    border: none; border-radius: 999px; padding: 11px 20px; white-space: nowrap; flex: 0 0 auto;
+    box-shadow: 0 0 16px rgba(255,179,0,.55);
+    animation: goPulse 1.4s ease-in-out infinite;
+    transition: transform .15s;
+  }
+  .game-entry .ge-go:hover { transform: scale(1.08); }
+  @keyframes goPulse {
+    0%, 100% { box-shadow: 0 0 10px rgba(255,179,0,.4); transform: scale(1); }
+    50% { box-shadow: 0 0 26px rgba(255,179,0,.9); transform: scale(1.06); }
+  }
   .game-mask { z-index: 90; }
   .game {
     width: 100%; max-width: 420px; background: #10131c; border: 1px solid rgba(0,229,255,.25);
