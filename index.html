@@ -1731,6 +1731,16 @@ function renderNotice() {
       openMask('noticeMask');
       var nmb = document.getElementById('noticeModalBox');
       if (nmb) nmb.scrollTop = 0;                           // 每次弹窗都从顶部开始看
+      setTimeout(function () {                              // 内容短（无需滚动）直接放行
+        var el2 = document.getElementById('noticeModalBox');
+        var nb2 = document.getElementById('noticePopClose');
+        var tip2 = document.getElementById('noticeSwipeTip');
+        if (el2 && nb2 && el2.scrollHeight <= el2.clientHeight + 10) {
+          nb2.disabled = false;
+          nb2.style.opacity = '1';
+          if (tip2) tip2.textContent = '✅ 公告已读完，点下方按钮关闭';
+        }
+      }, 120);
     }
   } else {
     bar.style.display = 'none';
