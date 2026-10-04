@@ -675,6 +675,36 @@
     <div class="sub" id="pageSub">全网最权威 · 欢迎提名 · 纯属娱乐</div>
     <div class="count" id="pageCount"></div>
     <button class="nick-edit-btn" id="nickEditBtn" title="点击修改你的昵称">✏️ <span id="nickShow">未设置昵称</span></button>
+    <button class="nick-edit-btn" id="pwdBtn" title="查看/修改你的私人密码" style="margin-left:8px;">🔑 <span id="pwdState"></span></button>
+  </div>
+
+  <!-- ===== 私人密码设置弹窗（首次进入） ===== -->
+  <div class="mask" id="pwdSetMask">
+    <div class="modal">
+      <h3>🔑 设置你的私人密码</h3>
+      <div class="tip">这是你的<b>专属领奖凭证</b>，仅你自己可见（别人看不到）。<br>榜上领现金奖励时需要对密码，防止冒领。</div>
+      <div class="field" style="margin:14px 0 4px;"><input type="password" id="pwdSetInput" maxlength="12" placeholder="输入 4-12 位私人密码" style="width:100%;"></div>
+      <div class="row2" style="margin-top:14px;">
+        <button class="btn ghost" id="pwdSetSkip">先跳过</button>
+        <button class="btn ok" id="pwdSetOk">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 查看/修改私人密码弹窗 ===== -->
+  <div class="mask" id="pwdViewMask">
+    <div class="modal">
+      <h3>🔑 我的私人密码</h3>
+      <div class="tip" id="pwdViewCurrent">当前密码：—</div>
+      <div class="field" style="margin:14px 0 4px;">
+        <label>设置新密码（4-12 位）</label>
+        <input type="password" id="pwdNewInput" maxlength="12" placeholder="输入新私人密码" style="width:100%;">
+      </div>
+      <div class="row2" style="margin-top:14px;">
+        <button class="btn ghost" id="pwdViewClose">关闭</button>
+        <button class="btn ok" id="pwdViewSave">修改密码</button>
+      </div>
+    </div>
   </div>
 
   <!-- ===== 置顶公告（创作者后台发布） ===== -->
@@ -1026,7 +1056,8 @@ function load() {
       d.gameLogs = d.gameLogs || [];                                // 游戏战绩记录
       d.hits = d.hits || [];                                        // 殴打记录
       d.activity = d.activity || { enabled: false, key: '', endAt: null, scores: {}, winners: [], over: false };
-  d.adminHash = d.adminHash || '';    // 云端统一后台密码指纹（换设备密码保持一致）  // 活跃值活动
+  d.adminHash = d.adminHash || '';    // 云端统一后台密码指纹（换设备密码保持一致）
+  d.playerPasses = d.playerPasses || {};   // 玩家私人密码（云端存，后台可见，表层不公开）  // 活跃值活动
       // 旧版"待审核"机制已移除：历史 pending 人物直接上架
       (d.people || []).forEach(function (p) { if (p.status === 'pending') p.status = 'approved'; });
       return d;
@@ -1072,6 +1103,7 @@ function normalizeState(d) {
   d.hits = d.hits || [];
   d.activity = d.activity || { enabled: false, key: '', endAt: null, scores: {}, winners: [], over: false };
   d.adminHash = d.adminHash || '';    // 云端统一后台密码指纹（换设备密码保持一致）
+  d.playerPasses = d.playerPasses || {};   // 玩家私人密码（云端存，后台可见，表层不公开）
   if (d.activity) {   // 兼容旧格式活动数据（缺失字段补默认）
     if (d.activity.scores === undefined) d.activity.scores = {};
     if (d.activity.winners === undefined) d.activity.winners = [];
@@ -1164,6 +1196,15 @@ function trimState() {
       state.activity.winners = state.activity.winners.slice(-10);
     }
   }
+  // 私人密码：最多保留 300 人
+  if (state.playerPasses) {
+    var pks = Object.keys(state.playerPasses);
+    if (pks.length > 300) {
+      var pkeep = {};
+      pks.slice(-300).forEach(function (k) { pkeep[k] = state.playerPasses[k]; });
+      state.playerPasses = pkeep;
+    }
+  }
 }
 function doCloudSave() {
   if (!CLOUD.queue) return;
@@ -1199,6 +1240,11 @@ function doCloudSave() {
 }
 cloudLoad();
 
+/* 首次进入（还没有私人密码）：弹窗引导设置（领奖凭证，仅本人可见） */
+setTimeout(function () {
+  if (!me.pwd) openMask('pwdSetMask');
+}, 1500);
+
 function getMe() {
   try {
     var raw = localStorage.getItem(CONFIG.meKey);
@@ -1208,10 +1254,11 @@ function getMe() {
       if (m.bonusVotes === undefined) m.bonusVotes = 0;    // 游戏赢得的额外评级权
       if (m.wins === undefined) m.wins = 0;                // 对战胜利场数
       if (m.hitQuota === undefined) m.hitQuota = 0;        // 殴打机会（胜利+1）
+      if (m.pwd === undefined) m.pwd = '';                 // 私人密码（领奖凭证，仅本人可见）
       return m;
     }
   } catch (e) {}
-  return { id: 'u' + Math.random().toString(36).slice(2, 8), nick: '', addQuota: 3, bonusVotes: 0, wins: 0, hitQuota: 0 };
+  return { id: 'u' + Math.random().toString(36).slice(2, 8), nick: '', addQuota: 3, bonusVotes: 0, wins: 0, hitQuota: 0, pwd: '' };
 }
 function saveMe() { localStorage.setItem(CONFIG.meKey, JSON.stringify(me)); }
 
@@ -1367,6 +1414,7 @@ function esc(s) {
 /* ---------- 页面刷新 ---------- */
 function refresh() {
   refreshNickShow();
+  refreshPwdState();
   var hc = document.getElementById('hitCount');
   if (hc) hc.textContent = me.hitQuota || 0;
   renderNotice();
@@ -1393,7 +1441,10 @@ function settleActivity() {                        // 活动到期（开启满 2
     }).filter(function (x) { return x.s > 0; })
       .sort(function (x, y) { return y.s - x.s || (x.n < y.n ? -1 : 1); });
     a.winners = a.winners || [];
-    a.winners.push({ key: a.key || actDay(Date.now()), top: arr.slice(0, 3).map(function (r) { return { n: r.n, s: r.s }; }), time: now() });
+    var pp = state.playerPasses || {};
+    a.winners.push({ key: a.key || actDay(Date.now()), top: arr.slice(0, 3).map(function (r) {
+      return { n: r.n, s: r.s, p: (pp[r.id] && pp[r.id].p) || (me.id === r.id ? me.pwd : '') };
+    }), time: now() });
     if (a.winners.length > 10) a.winners.shift(); // 只留最近10轮结算记录
     a.scores = {};
     a.enabled = false;
@@ -1506,6 +1557,46 @@ function ensureNick(action, edit) {
   return false;
 }
 document.getElementById('nickEditBtn').addEventListener('click', function () { ensureNick(null, true); });
+
+/* ---------- 私人密码（领奖凭证，仅本人可见；后台可见上榜者密码） ---------- */
+function refreshPwdState() {
+  var el = document.getElementById('pwdState');
+  if (el) el.textContent = me.pwd ? '已设' : '未设';
+}
+document.getElementById('pwdBtn').addEventListener('click', function () {
+  if (!me.pwd) { openMask('pwdSetMask'); return; }
+  document.getElementById('pwdViewCurrent').textContent = '当前密码：' + me.pwd;
+  document.getElementById('pwdNewInput').value = '';
+  openMask('pwdViewMask');
+});
+document.getElementById('pwdSetSkip').addEventListener('click', function () { closeMask('pwdSetMask'); });
+function savePlayerPass() {
+  state.playerPasses = state.playerPasses || {};
+  state.playerPasses[me.id] = { n: me.nick || '匿名', p: me.pwd };
+}
+document.getElementById('pwdSetOk').addEventListener('click', function () {
+  var v = document.getElementById('pwdSetInput').value.trim();
+  if (v.length < 4 || v.length > 12) { toast('密码请用 4-12 位'); return; }
+  me.pwd = v;
+  saveMe();
+  savePlayerPass();
+  save();
+  closeMask('pwdSetMask');
+  refreshPwdState();
+  toast('🔑 私人密码已设置，记住它！领奖时要用');
+});
+document.getElementById('pwdViewSave').addEventListener('click', function () {
+  var v = document.getElementById('pwdNewInput').value.trim();
+  if (v.length < 4 || v.length > 12) { toast('密码请用 4-12 位'); return; }
+  me.pwd = v;
+  saveMe();
+  savePlayerPass();
+  save();
+  closeMask('pwdViewMask');
+  refreshPwdState();
+  toast('🔑 私人密码已更新');
+});
+document.getElementById('pwdViewClose').addEventListener('click', function () { closeMask('pwdViewMask'); });
 document.getElementById('nickSubmit').addEventListener('click', function () {
   var v = document.getElementById('nickInput').value.trim();
   if (!v) { toast('昵称不能为空'); return; }
@@ -1901,17 +1992,20 @@ function renderLogs(tab) {
     list = (state.activity && state.activity.winners || []).slice().reverse().map(function (w) {
       return { id: w.key + '_' + w.time, who: '结算', time: w.time,
         body: '第 ' + actDay(Number(w.key) || Date.now()) + ' 轮：' + (w.top || []).map(function (t, i) {
-          return '第' + (i + 1) + '名 ' + t.n + '（' + t.s + '分）';
+          return '第' + (i + 1) + '名 ' + t.n + '（' + t.s + '分' + (t.p ? ' · 🔑' + t.p : '') + '）';
         }).join('，') };
     });
     var actHead = document.createElement('div');
     actHead.className = 'act-admin-head';
     var top = activityTop();
     var a = state.activity || {};
+    var pp = state.playerPasses || {};
     actHead.innerHTML = '<div style="font-size:12px;color:var(--muted);margin:6px 0;">本轮前5（活动持续2天，到期自动结算）：' +
       (a.enabled ? ' · ⏳ 剩余 ' + actRemainText(a) : (a.over ? ' · 本轮已结束' : '')) + '</div>' +
       (top.length ? top.map(function (t, i) {
-        return '<div class="l-body">第' + (i + 1) + '名 <b>' + esc(t.n) + '</b> —— ' + (t.s || 0) + ' 分</div>';
+        var pwd = (pp[t.id] && pp[t.id].p) || '';
+        return '<div class="l-body">第' + (i + 1) + '名 <b>' + esc(t.n) + '</b> —— ' + (t.s || 0) + ' 分' +
+          (pwd ? ' · <span style="color:#4dff88;">🔑密码 ' + esc(pwd) + '</span>' : ' · <span style="color:#ff6b6b;">未设密码</span>') + '</div>';
       }).join('') : '<div class="l-body">本轮暂无活跃记录</div>');
     var boxEl = document.getElementById('adminLogs');
     var first = boxEl.firstChild;
