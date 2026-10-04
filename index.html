@@ -389,6 +389,31 @@
     font-weight: 700;
   }
 
+  /* 活跃值活动榜 */
+  .act-card {
+    border: 1px solid var(--line); border-radius: 16px; margin-bottom: 14px;
+    background: linear-gradient(160deg, rgba(255,45,85,.08), rgba(255,179,0,.06) 55%, rgba(0,229,255,.06));
+    padding: 14px; overflow: hidden;
+  }
+  .act-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .act-title { font-size: 17px; font-weight: 900; }
+  .act-state { font-size: 15px; font-weight: 900; letter-spacing: 1px; }
+  .act-on { color: #4dff88; text-shadow: 0 0 12px rgba(77,255,136,.8); animation: actPulse 1.6s ease-in-out infinite; }
+  .act-off { color: #888; }
+  @keyframes actPulse { 0%,100% { opacity: 1; } 50% { opacity: .45; } }
+  .act-week { font-size: 11px; color: var(--muted); margin-bottom: 8px; }
+  .act-list { display: flex; flex-direction: column; gap: 7px; }
+  .act-row { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 10px; background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.07); }
+  .act-rank { width: 26px; height: 26px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 14px; background: rgba(255,255,255,.08); }
+  .act-rank.r1 { background: linear-gradient(135deg, #ffd700, #ff9d00); color: #1a1206; }
+  .act-rank.r2 { background: linear-gradient(135deg, #e3e6eb, #aab2c0); color: #15181d; }
+  .act-rank.r3 { background: linear-gradient(135deg, #e8a36b, #b96a2c); color: #221105; }
+  .act-nick { flex: 1; font-size: 14px; font-weight: 800; }
+  .act-score { font-size: 13px; font-weight: 900; color: #ffb300; }
+  .act-rules { margin-top: 10px; font-size: 11px; color: var(--muted); line-height: 1.7; border-top: 1px dashed rgba(255,255,255,.12); padding-top: 8px; }
+  .act-rules b { color: #ffb300; }
+  .act-empty { font-size: 12px; color: var(--muted); text-align: center; padding: 10px 0; }
+
   /* 弹窗入场 */
   .mask.show .modal { animation: modalIn .35s cubic-bezier(.2,.9,.3,1.15); }
   @keyframes modalIn {    0% { opacity: 0; transform: translateY(28px) scale(.92); }
@@ -655,6 +680,9 @@
   <!-- ===== 置顶公告（创作者后台发布） ===== -->
   <div class="notice-bar" id="noticeBar" style="display:none;"></div>
 
+  <!-- ===== 活跃值活动榜（每周日24:00结算，前5名） ===== -->
+  <div id="activityBox"></div>
+
   <!-- ===== 排行榜 ===== -->
   <div class="sec-title">🏆 实时总榜 <span class="more">按总分排序</span></div>
   <div class="podium" id="podium"></div>
@@ -814,6 +842,7 @@
       <div class="switch-row"><span>允许投票</span><label class="switch"><input type="checkbox" id="swVote"><span class="slider"></span></label></div>
       <div class="switch-row"><span>允许评论</span><label class="switch"><input type="checkbox" id="swCmt"><span class="slider"></span></label></div>
       <div class="switch-row"><span>允许推荐人物</span><label class="switch"><input type="checkbox" id="swAdd"><span class="slider"></span></label></div>
+      <div class="switch-row"><span>🔥 活跃榜活动</span><label class="switch"><input type="checkbox" id="swAct"><span class="slider"></span></label></div>
       <div style="font-size:11px;color:var(--muted);padding:0 2px;">关掉某个开关，表层对应按钮立刻失效，方便控制场面</div>
     </div>
 
@@ -859,6 +888,7 @@
       <div class="tab" data-tab="msgs">私信</div>
       <div class="tab" data-tab="games">🎮 游戏战绩</div>
       <div class="tab" data-tab="hits">👊 殴打记录</div>
+      <div class="tab" data-tab="act">🔥 活跃榜</div>
     </div>
     <div id="adminLogs"></div>
     <button class="btn ok" id="adminPwd" style="width:100%;margin-bottom:10px;">修改创作者密码</button>
@@ -993,6 +1023,7 @@ function load() {
       d.gameCfg = d.gameCfg || { enabled: true, burst: 60, fail: 20, eBurst: 40, eSpeed: 0, draw: 55 };
       d.gameLogs = d.gameLogs || [];                                // 游戏战绩记录
       d.hits = d.hits || [];                                        // 殴打记录
+      d.activity = d.activity || { enabled: false, weekKey: '', scores: {}, winners: [] };  // 活跃值活动
       // 旧版"待审核"机制已移除：历史 pending 人物直接上架
       (d.people || []).forEach(function (p) { if (p.status === 'pending') p.status = 'approved'; });
       return d;
@@ -1036,6 +1067,7 @@ function normalizeState(d) {
   d.gameCfg = d.gameCfg || { enabled: true, burst: 60, fail: 20, eBurst: 40, eSpeed: 0, draw: 55 };
   d.gameLogs = d.gameLogs || [];
   d.hits = d.hits || [];
+  d.activity = d.activity || { enabled: false, weekKey: '', scores: {}, winners: [] };
   d.people = (d.people || []).map(function (p) { if (p.status === 'pending') p.status = 'approved'; return p; });
   if (!d.ratings) d.ratings = [];
   if (!d.comments) d.comments = [];
@@ -1086,6 +1118,7 @@ function cloudLoad() {
           refresh();
         } else {
           state = normalizeState(remote);              // 云端为准
+          settleActivity();                            // 到周日24:00自动结算活跃榜
           saveLocal();
           refresh();
         }
@@ -1101,12 +1134,24 @@ function scheduleCloudSave() {
   if (CLOUD.timer) clearTimeout(CLOUD.timer);
   CLOUD.timer = setTimeout(doCloudSave, 800);
 }
-/* 自动清理：评论最新 50 条、评级 300 条、私信 100 条、游戏战绩 50 条、调分记录 50 条、殴打记录 100 条（只删最旧的） */
+/* 自动清理：评论最新 50 条、评级 300 条、私信 100 条、游戏战绩 50 条、调分记录 50 条、殴打记录 100 条、活跃分 300 人（只删最旧的） */
 function trimState() {
   var LIM = { comments: 50, ratings: 300, messages: 100, gameLogs: 50, adjustments: 50, hits: 100 };
   Object.keys(LIM).forEach(function (k) {
     if ((state[k] || []).length > LIM[k]) state[k] = state[k].slice(-LIM[k]);
   });
+  // 活跃分：每用户一条，超过 300 人时保留最新 300 条（防止文件膨胀）
+  if (state.activity && state.activity.scores) {
+    var ks = Object.keys(state.activity.scores);
+    if (ks.length > 300) {
+      var keep = {};
+      ks.slice(-300).forEach(function (k) { keep[k] = state.activity.scores[k]; });
+      state.activity.scores = keep;
+    }
+    if (state.activity.winners && state.activity.winners.length > 10) {
+      state.activity.winners = state.activity.winners.slice(-10);
+    }
+  }
 }
 function doCloudSave() {
   if (!CLOUD.queue) return;
@@ -1314,22 +1359,97 @@ function refresh() {
   if (hc) hc.textContent = me.hitQuota || 0;
   renderNotice();
   renderPodium();
+  renderActivity();
   renderList();
   var online = state.people.filter(function (p) { return p.status !== 'pending'; }).length;
   document.getElementById('pageCount').textContent =
     '共 ' + online + ' 位人物 · ' + state.ratings.length + ' 次评级 · ' + state.comments.length + ' 条言论';
 }
 
+/* ---------- 活跃值活动（每周日24:00结算，前5名） ---------- */
+function actWeekStart(now) {                       // 本周一 00:00（中国时区）
+  var d = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  var w = d.getDay();                              // 0=周日 … 6=周六
+  d.setDate(d.getDate() - (w === 0 ? 6 : w - 1));
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+function actWeekKey(now) {                          // 周标识：本周一日期
+  var s = actWeekStart(now);
+  var m = s.getMonth() + 1, dd = s.getDate();
+  return s.getFullYear() + '-' + (m < 10 ? '0' + m : m) + '-' + (dd < 10 ? '0' + dd : dd);
+}
+function settleActivity() {                         // 到周日24:00（=下周一00:00）自动结算
+  var a = state.activity;
+  if (!a || !a.scores) return;
+  var now = new Date(), next = actWeekStart(now).getTime() + 7 * 86400000;
+  if (now.getTime() < next) return;                 // 还没到结算点
+  var key = actWeekKey(now);
+  if (a.weekKey === key) return;                    // 本周已结算过（防重复）
+  var arr = Object.keys(a.scores).map(function (id) {
+    return { id: id, n: a.scores[id].n || '匿名', s: a.scores[id].s || 0 };
+  }).sort(function (x, y) { return y.s - x.s || (x.n < y.n ? -1 : 1); });
+  a.winners = a.winners || [];
+  a.winners.push({ week: a.weekKey || key, top: arr.slice(0, 3).map(function (r) { return { n: r.n, s: r.s }; }), time: now() });
+  if (a.winners.length > 10) a.winners.shift();     // 只留最近10周结算记录
+  a.scores = {};
+  a.weekKey = key;
+  save();
+}
+function activityAdd(pts) {                         // 给当前玩家加活跃值（活动关闭时不加）
+  var a = state.activity;
+  if (!a || !a.enabled || !(pts > 0)) return;
+  a.scores = a.scores || {};
+  var cur = a.scores[me.id] || { n: me.nick || '匿名', s: 0 };
+  cur.n = me.nick || cur.n;
+  cur.s += pts;
+  a.scores[me.id] = cur;
+}
+function activityTop() {                            // 本周前5（按分倒序）
+  var a = state.activity || {};
+  var arr = Object.keys(a.scores || {}).map(function (id) { return a.scores[id]; })
+    .sort(function (x, y) { return (y.s || 0) - (x.s || 0); });
+  return arr.slice(0, 5);
+}
+function renderActivity() {
+  var box = document.getElementById('activityBox');
+  if (!box) return;
+  var a = state.activity || { enabled: false, weekKey: '', scores: {}, winners: [] };
+  var on = !!a.enabled;
+  var medal = ['🥇', '🥈', '🥉', '4', '5'];
+  var top = activityTop();
+  var rows = top.length
+    ? top.map(function (t, i) {
+        return '<div class="act-row"><div class="act-rank' + (i < 3 ? ' r' + (i + 1) : '') + '">' + medal[i] + '</div>' +
+          '<div class="act-nick">' + esc(t.n) + '</div><div class="act-score">' + (t.s || 0) + ' 分</div></div>';
+      }).join('')
+    : '<div class="act-empty">本周还没有活跃记录，快来参与！</div>';
+  box.innerHTML =
+    '<div class="act-card">' +
+      '<div class="act-top">' +
+        '<div class="act-title">🔥 本周活跃值排行榜</div>' +
+        '<div class="act-state ' + (on ? 'act-on' : 'act-off') + '">' + (on ? '🟢 活动进行中' : '🔴 活动未开启') + '</div>' +
+      '</div>' +
+      '<div class="act-week">第 ' + (a.weekKey || actWeekKey(new Date())) + ' 周 · 每周日24:00 结算 · 只显示前5名</div>' +
+      '<div class="act-list">' + rows + '</div>' +
+      '<div class="act-rules">' +
+        '📌 活跃值规则：游玩一次游戏 <b>+1</b>（胜利 <b>+2</b>）· 殴打一次 <b>+0.5</b> · 评级一次 <b>+0.5</b> · 评论一次 <b>+0.5</b><br>' +
+        '💰 奖励：第1名 <b>20元</b> · 第2名 <b>10元</b> · 第3名 <b>5元</b>（活动结束后停止发放）<br>' +
+        '📢 创作者微信号见公告处，获奖后联系领取' +
+      '</div>' +
+    '</div>';
+}
+
 /* ---------- 渲染置顶公告 ---------- */
+var noticePosed = false;   // 每个页面会话只弹一次（刷新/重新进入都会弹）
 function renderNotice() {
   var bar = document.getElementById('noticeBar');
   if (state.notice) {
     bar.textContent = '📢 ' + state.notice;
     bar.style.display = 'block';
-    // 有新公告时进入页面弹窗提示（只弹一次，公告更新后再弹）
-    var key = 'notice_' + state.notice.slice(0, 40);
-    if (localStorage.getItem('rating_notice_seen') !== key) {
-      localStorage.setItem('rating_notice_seen', key);
+    // 每次进入页面都弹窗提示（只要刷新或重新扫码进入就会看到）
+    if (!noticePosed) {
+      noticePosed = true;
       document.getElementById('noticePopText').textContent = state.notice;
       openMask('noticeMask');
     }
@@ -1406,6 +1526,7 @@ document.getElementById('personList').addEventListener('click', function (e) {
 
 function doSendCmt(pid, text) {
   state.comments.push({ id: uid(), personId: pid, userId: me.id, nick: me.nick, text: text, time: now() });
+  activityAdd(0.5);      // 活跃值：评论+0.5
   var input = document.getElementById('ci_' + pid);
   if (input) input.value = '';
   save();
@@ -1433,6 +1554,7 @@ function openRate(pid) {
         // 用赢来的"额外评级权"再投一票（不覆盖之前的评级）
         state.ratings.push({ id: uid(), personId: pid, userId: me.id, nick: me.nick, level: rt.label, time: now() });
         me.bonusVotes -= 1;
+        activityAdd(0.5);  // 活跃值：评级+0.5
         saveMe();
         save();
         closeMask('rateMask');
@@ -1446,6 +1568,7 @@ function openRate(pid) {
         return !(r.personId === pid && r.userId === me.id);
       });
       state.ratings.push({ id: uid(), personId: pid, userId: me.id, nick: me.nick, level: rt.label, time: now() });
+      activityAdd(0.5);  // 活跃值：评级+0.5
       save();
       closeMask('rateMask');
       refresh();
@@ -1496,6 +1619,7 @@ function renderHitList() {
       var p = state.people.find(function (x) { return x.id === pid; });
       if (!p) return;
       (state.hits = state.hits || []).push({ id: uid(), personId: pid, nick: me.nick || '匿名', time: now() });
+      activityAdd(0.5);      // 活跃值：殴打+0.5
       me.hitQuota -= 1;
       saveMe();
       save();
@@ -1572,6 +1696,7 @@ function openAdmin() {
   document.getElementById('swVote').checked = state.flags.voting;
   document.getElementById('swCmt').checked = state.flags.comments;
   document.getElementById('swAdd').checked = state.flags.adding;
+  document.getElementById('swAct').checked = !!(state.activity && state.activity.enabled);
   document.getElementById('swGame').checked = !(state.gameCfg && state.gameCfg.enabled === false);
   document.getElementById('gcBurst').value = (state.gameCfg && state.gameCfg.burst != null) ? state.gameCfg.burst : 60;
   document.getElementById('gcFail').value = (state.gameCfg && state.gameCfg.fail != null) ? state.gameCfg.fail : 20;
@@ -1664,6 +1789,15 @@ function bindSwitch(id, key, tip) {
 bindSwitch('swVote', 'voting', '投票');
 bindSwitch('swCmt', 'comments', '评论');
 bindSwitch('swAdd', 'adding', '推荐人物');
+/* 活跃榜活动开关（活动数据在 state.activity） */
+document.getElementById('swAct').addEventListener('change', function () {
+  state.activity = state.activity || { enabled: false, weekKey: '', scores: {}, winners: [] };
+  if (this.checked && !state.activity.weekKey) state.activity.weekKey = actWeekKey(new Date());
+  state.activity.enabled = this.checked;
+  save();
+  renderActivity();
+  toast('活跃榜活动' + (this.checked ? '已开启' : '已关闭'));
+});
 document.getElementById('adminBack').addEventListener('click', function () {
   document.getElementById('adminPanel').classList.remove('show');
   document.body.style.overflow = '';
@@ -1720,6 +1854,24 @@ function renderLogs(tab) {
       return { id: h.id, who: h.nick, time: h.time,
         body: '👊 殴打了「' + personName(h.personId) + '」，扣 2 分' };
     });
+  } else if (tab === 'act') {
+    list = (state.activity && state.activity.winners || []).slice().reverse().map(function (w) {
+      return { id: w.week + '_' + w.time, who: '结算', time: w.time,
+        body: '第 ' + w.week + ' 周：' + (w.top || []).map(function (t, i) {
+          return '第' + (i + 1) + '名 ' + t.n + '（' + t.s + '分）';
+        }).join('，') };
+    });
+    var actHead = document.createElement('div');
+    actHead.className = 'act-admin-head';
+    var top = activityTop();
+    actHead.innerHTML = '<div style="font-size:12px;color:var(--muted);margin:6px 0;">本周前5（每周日24:00结算）：</div>' +
+      (top.length ? top.map(function (t, i) {
+        return '<div class="l-body">第' + (i + 1) + '名 <b>' + esc(t.n) + '</b> —— ' + (t.s || 0) + ' 分</div>';
+      }).join('') : '<div class="l-body">本周暂无活跃记录</div>');
+    var boxEl = document.getElementById('adminLogs');
+    var first = boxEl.firstChild;
+    boxEl.insertBefore(actHead, first);
+    if (list.length === 0) list = [{ id: 'act_none', who: '', time: '', body: '还没有历届结算记录' }];
   } else {
     list = state.messages.slice().reverse().map(function (m) {
       return { id: m.id, who: m.from, time: m.time,
@@ -1761,6 +1913,8 @@ document.getElementById('adminLogs').addEventListener('click', function (e) {
     state.gameLogs = (state.gameLogs || []).filter(function (g) { return g.id !== id; });
   } else if (tab === 'hits') {
     state.hits = (state.hits || []).filter(function (h) { return h.id !== id; });
+  } else if (tab === 'act') {
+    state.activity.winners = (state.activity.winners || []).filter(function (w) { return (w.week + '_' + w.time) !== id; });
   } else if (tab === 'adds') {
     state.people = state.people.filter(function (p) { return p.id !== id; });
     state.ratings = state.ratings.filter(function (r) { return r.personId !== id; });
@@ -2468,6 +2622,7 @@ window.__openMsg = openMsgModal;
       id: uid(), nick: me.nick || '匿名', win: win, comeback: comeback,
       player: G.player.role.name, enemy: G.enemy.role.name, time: now()
     });
+    activityAdd(1);          // 活跃值：游玩+1
     save();
     if (win) {
       var mult = comeback ? 2 : 1;
@@ -2475,6 +2630,7 @@ window.__openMsg = openMsgModal;
       me.bonusVotes = (me.bonusVotes || 0) + mult;
       me.wins = (me.wins || 0) + 1;
       me.hitQuota = (me.hitQuota || 0) + 1;
+      activityAdd(1);        // 活跃值：胜利再+1（合计+2）
       saveMe();
       document.getElementById('gameWinCount').textContent = '🏆 胜场 ' + me.wins;
       sfxWin(comeback);
