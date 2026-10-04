@@ -1444,7 +1444,7 @@ function renderActivity() {
         '<div class="act-title">🔥 活跃值排行榜</div>' +
         '<div class="act-state ' + cls + '">' + stateTxt + '</div>' +
       '</div>' +
-      '<div class="act-week">本轮 ' + (a.key ? actDay(a.key) : '——') + ' 开启 · 持续 2 天 · 只显示前5名</div>' +
+      '<div class="act-week">本轮 ' + (a.key ? actDay(Number(a.key)) : '——') + ' 开启 · 持续 2 天 · 只显示前5名</div>' +
       remain +
       '<div class="act-list">' + rows + '</div>' +
       '<div class="act-rules">' +
