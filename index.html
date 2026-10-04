@@ -684,7 +684,7 @@
   <div id="activityBox"></div>
 
   <!-- ===== 排行榜 ===== -->
-  <div class="sec-title">🏆 实时总榜 <span class="more">按总分排序</span></div>
+  <div class="sec-title">🎮 游戏人物票数榜 <span class="more">按票数排序</span></div>
   <div class="podium" id="podium"></div>
 
   <!-- ===== 小游戏入口 ===== -->
@@ -695,7 +695,7 @@
   </div>
 
   <!-- ===== 人物列表 ===== -->
-  <div class="sec-title">⭐ 全部人物 <span class="more">点击评级，畅所欲言</span></div>
+  <div class="sec-title">⭐ 全部角色 <span class="more">点击评级，畅所欲言</span></div>
   <div class="list" id="personList"></div>
 
   <!-- ===== 悬浮加人按钮 ===== -->
@@ -1001,7 +1001,9 @@ function cyrb53(str, seed) {
   return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(16);
 }
 function currentAdminHash() {
-  return localStorage.getItem('rating_admin_hash') || CONFIG.ADMIN_HASH;
+  // 优先级：本机改过的密码 > 云端统一密码 > 代码默认
+  // 云端 hash 保证换设备后密码一致（不再回到旧默认值）
+  return localStorage.getItem('rating_admin_hash') || (state.adminHash) || CONFIG.ADMIN_HASH;
 }
 
 /* ============================================================
@@ -1023,7 +1025,8 @@ function load() {
       d.gameCfg = d.gameCfg || { enabled: true, burst: 60, fail: 20, eBurst: 40, eSpeed: 0, draw: 55 };
       d.gameLogs = d.gameLogs || [];                                // 游戏战绩记录
       d.hits = d.hits || [];                                        // 殴打记录
-      d.activity = d.activity || { enabled: false, key: '', endAt: null, scores: {}, winners: [], over: false };  // 活跃值活动
+      d.activity = d.activity || { enabled: false, key: '', endAt: null, scores: {}, winners: [], over: false };
+  d.adminHash = d.adminHash || '';    // 云端统一后台密码指纹（换设备密码保持一致）  // 活跃值活动
       // 旧版"待审核"机制已移除：历史 pending 人物直接上架
       (d.people || []).forEach(function (p) { if (p.status === 'pending') p.status = 'approved'; });
       return d;
@@ -1068,6 +1071,7 @@ function normalizeState(d) {
   d.gameLogs = d.gameLogs || [];
   d.hits = d.hits || [];
   d.activity = d.activity || { enabled: false, key: '', endAt: null, scores: {}, winners: [], over: false };
+  d.adminHash = d.adminHash || '';    // 云端统一后台密码指纹（换设备密码保持一致）
   if (d.activity) {   // 兼容旧格式活动数据（缺失字段补默认）
     if (d.activity.scores === undefined) d.activity.scores = {};
     if (d.activity.winners === undefined) d.activity.winners = [];
@@ -2023,8 +2027,10 @@ document.getElementById('pwdEditSave').addEventListener('click', function () {
   if (n1.length < 4 || n1.length > 12) { toast('新密码请用 4-12 位数字或字母'); return; }
   if (n1 !== n2) { toast('两次输入的新密码不一致'); return; }
   localStorage.setItem('rating_admin_hash', cyrb53(n1, 2026));
+  state.adminHash = cyrb53(n1, 2026);   // 同步到云端，保证所有设备统一
+  save();
   closeMask('pwdEditMask');
-  toast('密码已更新（保存在这台设备上）');
+  toast('密码已更新并同步到云端，所有设备一致');
 });
 
 /* --- 导出数据 --- */
@@ -2724,7 +2730,7 @@ window.__openMsg = openMsgModal;
   <!-- ============ 背景音乐 ============ -->
   <style>
     #bgmBtn {
-      position: fixed; right: 14px; bottom: 84px; width: 46px; height: 46px; border-radius: 50%;
+      position: fixed; left: 14px; bottom: 84px; width: 46px; height: 46px; border-radius: 50%;
       background: rgba(0, 229, 255, .14); border: 1px solid rgba(0, 229, 255, .5); color: var(--accent);
       font-size: 20px; display: none; align-items: center; justify-content: center; z-index: 80; cursor: pointer;
       backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
@@ -2733,7 +2739,7 @@ window.__openMsg = openMsgModal;
     #bgmBtn.on { background: rgba(0, 229, 255, .32); animation: none; }
     @keyframes bgmPulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(0, 229, 255, .35); } 50% { box-shadow: 0 0 0 10px rgba(0, 229, 255, 0); } }
     #bgmTip {
-      position: fixed; right: 14px; bottom: 136px; z-index: 81; background: rgba(8, 10, 18, .88);
+      position: fixed; left: 14px; bottom: 136px; z-index: 81; background: rgba(8, 10, 18, .88);
       color: #fff; font-size: 12px; padding: 7px 12px; border-radius: 10px; display: none;
       max-width: 170px; text-align: center; line-height: 1.5; border: 1px solid rgba(0, 229, 255, .3);
     }
