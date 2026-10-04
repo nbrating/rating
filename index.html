@@ -1097,7 +1097,8 @@ function load() {
       d.gameCfg = d.gameCfg || { enabled: true, burst: 60, fail: 20, eBurst: 40, eSpeed: 0, draw: 55 };
       d.gameLogs = d.gameLogs || [];                                // 游戏战绩记录
       d.hits = d.hits || [];                                        // 寿来~记录
-      d.activity = d.activity || { enabled: false, key: '', endAt: null, scores: {}, winners: [], over: false };
+      d.activity = d.activity || { enabled: false, key: '', endAt: null, scores: {}, winners: [], over: false, freezeUntil: null };
+      d.daily = d.daily || { endAt: null, scores: {} };             // 每日排行榜（每24小时一轮）
   d.adminHash = d.adminHash || '';    // 云端统一后台密码指纹（换设备密码保持一致）
   d.playerPasses = d.playerPasses || {};   // 玩家私人密码（云端存，后台可见，表层不公开）
   d.scoreNotices = d.scoreNotices || {};   // 管理员调分提示（按玩家存最近一条，玩家进入时弹窗）
@@ -1145,7 +1146,8 @@ function normalizeState(d) {
   d.gameCfg = d.gameCfg || { enabled: true, burst: 60, fail: 20, eBurst: 40, eSpeed: 0, draw: 55 };
   d.gameLogs = d.gameLogs || [];
   d.hits = d.hits || [];
-  d.activity = d.activity || { enabled: false, key: '', endAt: null, scores: {}, winners: [], over: false };
+  d.activity = d.activity || { enabled: false, key: '', endAt: null, scores: {}, winners: [], over: false, freezeUntil: null };
+  d.daily = d.daily || { endAt: null, scores: {} };   // 每日排行榜（每24小时一轮，固定存在）
   d.adminHash = d.adminHash || '';    // 云端统一后台密码指纹（换设备密码保持一致）
   d.playerPasses = d.playerPasses || {};   // 玩家私人密码（云端存，后台可见，表层不公开）
   d.scoreNotices = d.scoreNotices || {};   // 管理员调分提示（按玩家存最近一条，玩家进入时弹窗）
@@ -1156,6 +1158,7 @@ function normalizeState(d) {
     if (d.activity.endAt === undefined) d.activity.endAt = null;
     if (d.activity.key === undefined) d.activity.key = d.activity.weekKey || '';
     if (d.activity.over === undefined) d.activity.over = false;
+    if (d.activity.freezeUntil === undefined) d.activity.freezeUntil = null;
     if (d.activity.enabled && d.activity.endAt === null) d.activity.enabled = false;  // 无截止时间的"开启"视为未开启（旧脏数据）
   }
   d.people = (d.people || []).map(function (p) { if (p.status === 'pending') p.status = 'approved'; return p; });
@@ -1208,6 +1211,7 @@ function cloudLoad() {
           refresh();
         } else {
           state = normalizeState(remote);              // 云端为准
+          settleDaily();                               // 每日榜 24h 轮换检查
           settleActivity();                            // 到点自动结算活跃榜
           saveLocal();
           refresh();
@@ -1241,6 +1245,15 @@ function trimState() {
     }
     if (state.activity.winners && state.activity.winners.length > 10) {
       state.activity.winners = state.activity.winners.slice(-10);
+    }
+  }
+  // 每日榜：同样限 300 人
+  if (state.daily && state.daily.scores) {
+    var dks = Object.keys(state.daily.scores);
+    if (dks.length > 300) {
+      var dkeep = {};
+      dks.slice(-300).forEach(function (k) { dkeep[k] = state.daily.scores[k]; });
+      state.daily.scores = dkeep;
     }
   }
   // 私人密码：最多保留 300 人
@@ -1491,10 +1504,11 @@ function actDay(ts) {                            // 时间戳 → 日期串
   var m = d.getMonth() + 1, dd = d.getDate();
   return d.getFullYear() + '-' + (m < 10 ? '0' + m : m) + '-' + (dd < 10 ? '0' + dd : dd);
 }
-function settleActivity() {                        // 活动到期（开启满 2 天）自动结算一次
+function settleActivity() {                        // 活动到期自动结算；结束后冻结 6 小时展示，再清除
   var a = state.activity;
   if (!a || !a.scores) return;
-  if (a.enabled && a.endAt && Date.now() >= a.endAt) {
+  var now = Date.now();
+  if (a.enabled && a.endAt && now >= a.endAt) {
     var arr = Object.keys(a.scores).map(function (id) {
       return { id: id, n: a.scores[id].n || '匿名', s: a.scores[id].s || 0 };
     }).filter(function (x) { return x.s > 0; })
@@ -1505,22 +1519,53 @@ function settleActivity() {                        // 活动到期（开启满 2
       return { n: r.n, s: r.s, p: (pp[r.id] && pp[r.id].p) || (me.id === r.id ? me.pwd : '') };
     }), time: now() });
     if (a.winners.length > 10) a.winners.shift(); // 只留最近10轮结算记录
-    a.scores = {};
     a.enabled = false;
     a.endAt = null;
-    a.over = true;                                // 本轮已结束（重新开启即开新一轮）
+    a.over = true;                                // 本轮已结束：分数冻结保留
+    a.freezeUntil = now + 6 * 3600000;            // 冻结 6 小时展示最终结果
+    save();
+  } else if (!a.enabled && a.freezeUntil && now >= a.freezeUntil) {
+    a.scores = {};                                // 冻结期结束，清除本轮分数
+    a.freezeUntil = null;
     save();
   }
 }
-function activityAdd(pts) {                         // 给当前玩家加活跃值（活动关闭/管理员不加分）
-  var a = state.activity;
-  if (!a || !a.enabled || !(pts > 0)) return;
+/* 每日排行榜：每 24 小时自动轮换一轮（固定一直存在，0 点不清，按满 24 小时刷新） */
+function settleDaily() {
+  var d = state.daily;
+  if (!d) { state.daily = { endAt: null, scores: {} }; return; }
+  var now = Date.now();
+  if (!d.endAt) { d.endAt = now + 86400000; return; }          // 首次：从现在起 24 小时一轮
+  if (now >= d.endAt) {
+    d.scores = {};                                             // 新的一天，重新记分
+    d.endAt = now + 86400000;
+    save();
+  }
+}
+function dailyTop() {                            // 每日榜前5（0 分不计，按分倒序）
+  var d = state.daily || {};
+  var arr = Object.keys(d.scores || {}).map(function (id) { return { id: id, n: d.scores[id].n, s: d.scores[id].s || 0 }; })
+    .filter(function (t) { return t.s > 0; })
+    .sort(function (x, y) { return y.s - x.s; });
+  return arr.slice(0, 5);
+}
+function activityAdd(pts) {                         // 给当前玩家加活跃值（管理员不加分；每日榜始终累计，活动榜仅在开启时累计）
+  if (!(pts > 0)) return;
   if (isAdmin()) return;                             // 管理员不参与积分榜
-  a.scores = a.scores || {};
-  var cur = a.scores[me.id] || { n: me.nick || '匿名', s: 0 };
-  cur.n = me.nick || cur.n;
-  cur.s += pts;
-  a.scores[me.id] = cur;
+  state.daily = state.daily || { endAt: null, scores: {} };
+  state.daily.scores = state.daily.scores || {};
+  var dc = state.daily.scores[me.id] || { n: me.nick || '匿名', s: 0 };
+  dc.n = me.nick || dc.n;
+  dc.s += pts;
+  state.daily.scores[me.id] = dc;
+  var a = state.activity;
+  if (a && a.enabled) {
+    a.scores = a.scores || {};
+    var cur = a.scores[me.id] || { n: me.nick || '匿名', s: 0 };
+    cur.n = me.nick || cur.n;
+    cur.s += pts;
+    a.scores[me.id] = cur;
+  }
 }
 function activityTop() {                            // 本轮前5（0 分不计入榜单，按分倒序）
   var a = state.activity || {};
@@ -1536,47 +1581,82 @@ function actRemainText(a) {                        // 剩余时间文案
   var h = Math.floor(ms / 3600000), m = Math.floor((ms % 3600000) / 60000);
   return (h > 0 ? h + '小时' : '') + (m > 0 ? m + '分钟' : '') + '后结算';
 }
+function dailyRemainText() {                    // 每日榜刷新倒计时
+  var d = state.daily || {};
+  if (!d.endAt) return '';
+  var ms = d.endAt - Date.now();
+  if (ms <= 0) return '即将刷新…';
+  var h = Math.floor(ms / 3600000), m = Math.floor((ms % 3600000) / 60000);
+  return (h > 0 ? h + '小时' : '') + (m > 0 ? m + '分钟' : '') + '后刷新';
+}
+function freezeRemainText() {                   // 活动结束冻结剩余展示时间
+  var a = state.activity || {};
+  if (!a.freezeUntil) return '';
+  var ms = a.freezeUntil - Date.now();
+  if (ms <= 0) return '即将清除…';
+  var h = Math.floor(ms / 3600000), m = Math.floor((ms % 3600000) / 60000);
+  return (h > 0 ? h + '小时' : '') + (m > 0 ? m + '分钟' : '') + '后清除';
+}
 function renderActivity() {
   var box = document.getElementById('activityBox');
   if (!box) return;
-  var a = state.activity || { enabled: false, key: '', endAt: null, scores: {}, winners: [], over: false };
+  var a = state.activity || { enabled: false, key: '', endAt: null, scores: {}, winners: [], over: false, freezeUntil: null };
+  var medal = ['🥇', '🥈', '🥉', '4', '5'];
+  /* —— 每日排行榜（固定存在，24小时一轮） —— */
+  var dTop = dailyTop();
+  var dRows = dTop.length
+    ? dTop.map(function (t, i) {
+        return '<div class="act-row"><div class="act-rank' + (i < 3 ? ' r' + (i + 1) : '') + '">' + medal[i] + '</div>' +
+          '<div class="act-nick">' + esc(t.n) + '</div><div class="act-score">' + (t.s || 0) + ' 分</div></div>';
+      }).join('')
+    : '<div class="act-empty">还没有记录，快来参与！</div>';
+  var dailyCard =
+    '<div class="act-card" style="border-color:rgba(0,229,255,.35);">' +
+      '<div class="act-top">' +
+        '<div class="act-title">📅 每日排行榜</div>' +
+        '<div class="act-state act-on">🟢 每日刷新</div>' +
+      '</div>' +
+      '<div class="act-week" id="dailyRemain">⏳ ' + dailyRemainText() + '（每 24 小时刷新一轮）</div>' +
+      '<div class="act-list">' + dRows + '</div>' +
+      '<div class="act-rules">📌 每日榜规则：游玩一次游戏 <b>+1</b>（胜利 <b>+2</b>）· 寿来~一次 <b>+0.5</b> · 评级一次 <b>+0.5</b> · 评论一次 <b>+0.5</b> · 添加人物 <b>+1.5</b></div>' +
+    '</div>';
+  /* —— 活动排行榜（活动期实时变动；结束冻结 6 小时展示后清除） —— */
   var stateTxt, cls;
   if (a.enabled) { stateTxt = '🟢 活动进行中'; cls = 'act-on'; }
-  else if (a.over) { stateTxt = '⚪ 本轮已结束'; cls = 'act-off'; }
+  else if (a.over && a.freezeUntil && Date.now() < a.freezeUntil) { stateTxt = '⚪ 已结束 · 结果保留中'; cls = 'act-off'; }
   else { stateTxt = '🔴 活动未开启'; cls = 'act-off'; }
-  var medal = ['🥇', '🥈', '🥉', '4', '5'];
   var top = activityTop();
   var rows = top.length
     ? top.map(function (t, i) {
         return '<div class="act-row"><div class="act-rank' + (i < 3 ? ' r' + (i + 1) : '') + '">' + medal[i] + '</div>' +
           '<div class="act-nick">' + esc(t.n) + '</div><div class="act-score">' + (t.s || 0) + ' 分</div></div>';
       }).join('')
-    : '<div class="act-empty">' + (a.enabled ? '还没有活跃记录，快来参与！' : '待活动开启') + '</div>';
-  var remain = a.enabled ? ('<div class="act-week" id="actRemain">⏳ 剩余 ' + actRemainText(a) + '</div>') : '';
-  box.innerHTML =
+    : '<div class="act-empty">' + (a.enabled ? '还没有活跃记录，快来参与！' : (a.over ? '本轮已结束，待新活动开启' : '待活动开启')) + '</div>';
+  var remain = a.enabled
+    ? ('<div class="act-week" id="actRemain">⏳ 剩余 ' + actRemainText(a) + '</div>')
+    : (a.over && a.freezeUntil && Date.now() < a.freezeUntil ? ('<div class="act-week" id="actFreeze">🧊 结果固定，' + freezeRemainText() + '清除</div>') : '');
+  var actCard =
     '<div class="act-card">' +
       '<div class="act-top">' +
-        '<div class="act-title">🔥 活跃值排行榜</div>' +
+        '<div class="act-title">🔥 活跃榜活动</div>' +
         '<div class="act-state ' + cls + '">' + stateTxt + '</div>' +
       '</div>' +
-      '<div class="act-week">本轮 ' + (a.key ? actDay(Number(a.key)) : '——') + ' 开启 · 持续 2 天 · 只显示前5名</div>' +
+      '<div class="act-week">本轮 ' + (a.key ? actDay(Number(a.key)) : '——') + ' 开启 · 只显示前5名 · 起始并入当日每日榜</div>' +
       remain +
       '<div class="act-list">' + rows + '</div>' +
       '<div class="act-rules">' +
         '📌 活跃值规则：游玩一次游戏 <b>+1</b>（胜利 <b>+2</b>）· 寿来~一次 <b>+0.5</b> · 评级一次 <b>+0.5</b> · 评论一次 <b>+0.5</b> · 添加人物 <b>+1.5</b><br>' +
-        '💰 奖励：第1名 <b>20元</b> · 第2名 <b>10元</b> · 第3名 <b>5元</b>（本轮结束后结算发放）<br>' +
+        '💰 奖励：第1名 <b>20元</b> · 第2名 <b>10元</b> · 第3名 <b>5元</b>（活动结束结算发放）<br>' +
         '📢 创作者微信号见公告处，获奖后联系领取' +
       '</div>' +
     '</div>';
+  box.innerHTML = dailyCard + actCard;
 }
-/* 活动倒计时：每 30 秒更新一次剩余时间，顺带检查是否到期结算（轻量，不影响游戏） */
+/* 活动倒计时：每 30 秒更新一次剩余时间，顺带检查是否到期结算/每日刷新（轻量，不影响游戏） */
 setInterval(function () {
-  var el = document.getElementById('actRemain');
-  var a = state.activity;
-  if (a && a.enabled) {
-    settleActivity();
-    if (el && a.enabled) el.textContent = '⏳ 剩余 ' + actRemainText(a);
-  }
+  settleDaily();
+  settleActivity();
+  renderActivity();
 }, 30000);
 
 /* ---------- 渲染置顶公告 ---------- */
@@ -2006,25 +2086,25 @@ document.getElementById('adminBindBtn').addEventListener('click', function () {
 
 /* 活跃榜活动开关（开启后持续 2 天，到期自动结算；关闭 = 暂停，重新开启继续计时） */
 document.getElementById('swAct').addEventListener('change', function () {
-  state.activity = state.activity || { enabled: false, key: '', endAt: null, scores: {}, winners: [], over: false };
+  state.activity = state.activity || { enabled: false, key: '', endAt: null, scores: {}, winners: [], over: false, freezeUntil: null };
   if (this.checked) {
     var expired = state.activity.endAt && Date.now() >= state.activity.endAt;
     if (!state.activity.endAt || expired) {
-      // 新一轮：按后台设定的时长重新计时（默认 48 小时）
+      // 新一轮：按后台设定的时长重新计时（默认 48 小时），起始分数并入当日每日排行榜
       var hours = parseFloat(document.getElementById('actHours').value);
       if (isNaN(hours) || hours < 1) hours = 48;
       state.activity.endAt = Date.now() + hours * 3600000;
       state.activity.key = String(Date.now());
-      if (expired || state.activity.over) {
-        state.activity.scores = {};
-        state.activity.over = false;
-      }
+      state.activity.scores = JSON.parse(JSON.stringify((state.daily && state.daily.scores) || {}));  // 并入当日每日榜
+      state.activity.over = false;
+      state.activity.freezeUntil = null;
     }
     state.activity.enabled = true;
-    toast('🔥 活跃榜活动已开启（持续 ' + Math.round(hours || 48) + ' 小时）');
+    toast('🔥 活跃榜活动已开启（持续 ' + Math.round(hours || 48) + ' 小时，起始并入当日每日榜）');
   } else {
-    state.activity.enabled = false;   // 暂停记分，分数保留；重新开启继续计时
-    toast('活跃榜活动已暂停');
+    state.activity.enabled = false;   // 结束记分，分数冻结保留 6 小时后清除；重新开启继续计时
+    if (!state.activity.freezeUntil) state.activity.freezeUntil = Date.now() + 6 * 3600000;
+    toast('活跃榜活动已结束（结果保留 6 小时）');
   }
   save();
   renderActivity();
@@ -2048,23 +2128,30 @@ function personName(pid) {
   var p = state.people.find(function (x) { return x.id === pid; });  return p ? p.name : '（已删除的人物）';
 }
 
-/* 玩家管理：实时给玩家加/扣活跃值 */
+/* 玩家管理：实时给玩家加/扣活跃值（计入每日榜；活动开启时同步计入活动榜） */
 function adjustPlayerScore(uid, d) {
   if (!uid) return;
   if (state.admin && state.admin.userId && uid === state.admin.userId) { toast('管理员不参与积分榜'); return; }
-  state.activity = state.activity || { scores: {} };
-  state.activity.scores = state.activity.scores || {};
-  var cur = state.activity.scores[uid] || {
+  state.daily = state.daily || { endAt: null, scores: {} };
+  state.daily.scores = state.daily.scores || {};
+  var dc = state.daily.scores[uid] || {
     n: (state.playerPasses && state.playerPasses[uid] && state.playerPasses[uid].n) || '匿名',
     s: 0
   };
-  cur.s = Math.max(0, Math.round((cur.s + d) * 10) / 10);   // 不低于 0
-  state.activity.scores[uid] = cur;
+  dc.s = Math.max(0, Math.round((dc.s + d) * 10) / 10);   // 不低于 0
+  state.daily.scores[uid] = dc;
+  var a = state.activity;
+  if (a && a.enabled) {
+    a.scores = a.scores || {};
+    var ac = a.scores[uid] || { n: dc.n, s: 0 };
+    ac.s = Math.max(0, Math.round((ac.s + d) * 10) / 10);
+    a.scores[uid] = ac;
+  }
   (state.scoreNotices = state.scoreNotices || {})[uid] = { d: d, t: now() };  // 给玩家留调分提示
   save();
   renderLogs('players');
   refresh();
-  toast('已给「' + cur.n + '」' + (d > 0 ? '+' : '') + d + ' 活跃值');
+  toast('已给「' + dc.n + '」' + (d > 0 ? '+' : '') + d + ' 活跃值');
 }
 
 /* 玩家进入页面时：被管理员调过分的弹窗提示（每个玩家只弹最近一次，本地去重） */
@@ -2126,15 +2213,25 @@ function renderLogs(tab) {
     var actHead = document.createElement('div');
     actHead.className = 'act-admin-head';
     var top = activityTop();
+    var dTop = dailyTop();
     var a = state.activity || {};
     var pp = state.playerPasses || {};
-    actHead.innerHTML = '<div style="font-size:12px;color:var(--muted);margin:6px 0;">本轮前5（活动持续2天，到期自动结算）：' +
-      (a.enabled ? ' · ⏳ 剩余 ' + actRemainText(a) : (a.over ? ' · 本轮已结束' : '')) + '</div>' +
-      (top.length ? top.map(function (t, i) {
-        var pwd = (pp[t.id] && pp[t.id].p) || '';
-        return '<div class="l-body">第' + (i + 1) + '名 <b>' + esc(t.n) + '</b> —— ' + (t.s || 0) + ' 分' +
-          (pwd ? ' · <span style="color:#4dff88;">🔑密码 ' + esc(pwd) + '</span>' : ' · <span style="color:#ff6b6b;">未设密码</span>') + '</div>';
-      }).join('') : '<div class="l-body">本轮暂无活跃记录</div>');
+    var aState = a.enabled ? ('🟢 进行中 · ⏳ 剩余 ' + actRemainText(a)) : (a.over ? ('⚪ 已结束' + (a.freezeUntil && Date.now() < a.freezeUntil ? (' · 🧊 结果保留 ' + freezeRemainText()) : '')) : '🔴 未开启');
+    var dRows = dTop.map(function (t, i) {
+      var pwdd = (pp[t.id] && pp[t.id].p) || '';
+      return '<div class="l-body">第' + (i + 1) + '名 <b>' + esc(t.n) + '</b> —— ' + (t.s || 0) + ' 分' +
+        (pwdd ? ' · <span style="color:#4dff88;">🔑密码 ' + esc(pwdd) + '</span>' : ' · <span style="color:#ff6b6b;">未设密码</span>') + '</div>';
+    }).join('');
+    var aRows = top.map(function (t, i) {
+      var pwd = (pp[t.id] && pp[t.id].p) || '';
+      return '<div class="l-body">第' + (i + 1) + '名 <b>' + esc(t.n) + '</b> —— ' + (t.s || 0) + ' 分' +
+        (pwd ? ' · <span style="color:#4dff88;">🔑密码 ' + esc(pwd) + '</span>' : ' · <span style="color:#ff6b6b;">未设密码</span>') + '</div>';
+    }).join('');
+    actHead.innerHTML =
+      '<div style="font-size:12px;color:var(--accent);font-weight:800;margin:6px 0 2px;">📅 每日排行榜（每24小时刷新，固定存在）</div>' +
+      (dRows || '<div class="l-body">今日暂无活跃记录</div>') +
+      '<div style="font-size:12px;color:var(--gold);font-weight:800;margin:10px 0 2px;">🔥 活跃榜活动 —— ' + aState + '</div>' +
+      (aRows || '<div class="l-body">本轮暂无活跃记录</div>');
     var boxEl = document.getElementById('adminLogs');
     var first = boxEl.firstChild;
     boxEl.insertBefore(actHead, first);
@@ -2147,7 +2244,7 @@ function renderLogs(tab) {
     }
   } else if (tab === 'players') {
     /* 玩家管理：全部注册玩家（按活跃值降序，与榜单一致）+ 实时加减分 */
-    var scoresM = (state.activity && state.activity.scores) || {};
+    var scoresM = (state.daily && state.daily.scores) || {};   // 玩家管理按每日榜排序（主榜）
     var passesM = state.playerPasses || {};
     var pmap = {};
     Object.keys(passesM).forEach(function (k) {
