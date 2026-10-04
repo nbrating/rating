@@ -1464,9 +1464,9 @@ function activityAdd(pts) {                         // 给当前玩家加活跃�
 }
 function activityTop() {                            // 本轮前5（0 分不计入榜单，按分倒序）
   var a = state.activity || {};
-  var arr = Object.keys(a.scores || {}).map(function (id) { return a.scores[id]; })
-    .filter(function (t) { return (t.s || 0) > 0; })
-    .sort(function (x, y) { return (y.s || 0) - (x.s || 0); });
+  var arr = Object.keys(a.scores || {}).map(function (id) { return { id: id, n: a.scores[id].n, s: a.scores[id].s || 0 }; })
+    .filter(function (t) { return t.s > 0; })
+    .sort(function (x, y) { return y.s - x.s; });
   return arr.slice(0, 5);
 }
 function actRemainText(a) {                        // 剩余时间文案
