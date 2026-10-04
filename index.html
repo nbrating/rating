@@ -8,9 +8,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>最权威人物评级</title>
 <script>
-/* 微信缓存顽固：打开页面自动带上版本号，强制加载最新版（部署新版本时把 v 数字 +1） */
+/* 微信缓存顽固：打开页面自动带上"时间戳版本号"，每次网址都不同 → 微信无法缓存旧版，永远加载最新 */
 if (!location.search.match(/[?&]v=\d+/)) {
-  location.replace(location.pathname.split('/').pop() === 'rating.html' ? 'rating.html?v=37' : '?v=37' + location.hash);
+  location.replace(location.pathname.split('/').pop() === 'rating.html' ? 'rating.html?v=' + Date.now() : '?v=' + Date.now() + location.hash);
 }
 </script>
 <style>
