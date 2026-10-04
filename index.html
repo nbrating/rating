@@ -1023,7 +1023,7 @@ function load() {
       d.gameCfg = d.gameCfg || { enabled: true, burst: 60, fail: 20, eBurst: 40, eSpeed: 0, draw: 55 };
       d.gameLogs = d.gameLogs || [];                                // 游戏战绩记录
       d.hits = d.hits || [];                                        // 殴打记录
-      d.activity = d.activity || { enabled: false, weekKey: '', scores: {}, winners: [] };  // 活跃值活动
+      d.activity = d.activity || { enabled: false, key: '', endAt: null, scores: {}, winners: [], over: false };  // 活跃值活动
       // 旧版"待审核"机制已移除：历史 pending 人物直接上架
       (d.people || []).forEach(function (p) { if (p.status === 'pending') p.status = 'approved'; });
       return d;
@@ -1067,7 +1067,15 @@ function normalizeState(d) {
   d.gameCfg = d.gameCfg || { enabled: true, burst: 60, fail: 20, eBurst: 40, eSpeed: 0, draw: 55 };
   d.gameLogs = d.gameLogs || [];
   d.hits = d.hits || [];
-  d.activity = d.activity || { enabled: false, weekKey: '', scores: {}, winners: [] };
+  d.activity = d.activity || { enabled: false, key: '', endAt: null, scores: {}, winners: [], over: false };
+  if (d.activity) {   // 兼容旧格式活动数据（缺失字段补默认）
+    if (d.activity.scores === undefined) d.activity.scores = {};
+    if (d.activity.winners === undefined) d.activity.winners = [];
+    if (d.activity.endAt === undefined) d.activity.endAt = null;
+    if (d.activity.key === undefined) d.activity.key = d.activity.weekKey || '';
+    if (d.activity.over === undefined) d.activity.over = false;
+    if (d.activity.enabled && d.activity.endAt === null) d.activity.enabled = false;  // 无截止时间的"开启"视为未开启（旧脏数据）
+  }
   d.people = (d.people || []).map(function (p) { if (p.status === 'pending') p.status = 'approved'; return p; });
   if (!d.ratings) d.ratings = [];
   if (!d.comments) d.comments = [];
@@ -1366,35 +1374,29 @@ function refresh() {
     '共 ' + online + ' 位人物 · ' + state.ratings.length + ' 次评级 · ' + state.comments.length + ' 条言论';
 }
 
-/* ---------- 活跃值活动（每周日24:00结算，前5名） ---------- */
-function actWeekStart(now) {                       // 本周一 00:00（中国时区）
-  var d = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  var w = d.getDay();                              // 0=周日 … 6=周六
-  d.setDate(d.getDate() - (w === 0 ? 6 : w - 1));
-  d.setHours(0, 0, 0, 0);
-  return d;
+/* ---------- 活跃值活动（开启后持续 2 天，到期自动结算一次） ---------- */
+function actDay(ts) {                            // 时间戳 → 日期串
+  var d = new Date(ts);
+  var m = d.getMonth() + 1, dd = d.getDate();
+  return d.getFullYear() + '-' + (m < 10 ? '0' + m : m) + '-' + (dd < 10 ? '0' + dd : dd);
 }
-function actWeekKey(now) {                          // 周标识：本周一日期
-  var s = actWeekStart(now);
-  var m = s.getMonth() + 1, dd = s.getDate();
-  return s.getFullYear() + '-' + (m < 10 ? '0' + m : m) + '-' + (dd < 10 ? '0' + dd : dd);
-}
-function settleActivity() {                         // 到周日24:00（=下周一00:00）自动结算
+function settleActivity() {                        // 活动到期（开启满 2 天）自动结算一次
   var a = state.activity;
   if (!a || !a.scores) return;
-  var now = new Date(), next = actWeekStart(now).getTime() + 7 * 86400000;
-  if (now.getTime() < next) return;                 // 还没到结算点
-  var key = actWeekKey(now);
-  if (a.weekKey === key) return;                    // 本周已结算过（防重复）
-  var arr = Object.keys(a.scores).map(function (id) {
-    return { id: id, n: a.scores[id].n || '匿名', s: a.scores[id].s || 0 };
-  }).sort(function (x, y) { return y.s - x.s || (x.n < y.n ? -1 : 1); });
-  a.winners = a.winners || [];
-  a.winners.push({ week: a.weekKey || key, top: arr.slice(0, 3).map(function (r) { return { n: r.n, s: r.s }; }), time: now() });
-  if (a.winners.length > 10) a.winners.shift();     // 只留最近10周结算记录
-  a.scores = {};
-  a.weekKey = key;
-  save();
+  if (a.enabled && a.endAt && Date.now() >= a.endAt) {
+    var arr = Object.keys(a.scores).map(function (id) {
+      return { id: id, n: a.scores[id].n || '匿名', s: a.scores[id].s || 0 };
+    }).filter(function (x) { return x.s > 0; })
+      .sort(function (x, y) { return y.s - x.s || (x.n < y.n ? -1 : 1); });
+    a.winners = a.winners || [];
+    a.winners.push({ key: a.key || actDay(Date.now()), top: arr.slice(0, 3).map(function (r) { return { n: r.n, s: r.s }; }), time: now() });
+    if (a.winners.length > 10) a.winners.shift(); // 只留最近10轮结算记录
+    a.scores = {};
+    a.enabled = false;
+    a.endAt = null;
+    a.over = true;                                // 本轮已结束（重新开启即开新一轮）
+    save();
+  }
 }
 function activityAdd(pts) {                         // 给当前玩家加活跃值（活动关闭时不加）
   var a = state.activity;
@@ -1405,17 +1407,28 @@ function activityAdd(pts) {                         // 给当前玩家加活跃�
   cur.s += pts;
   a.scores[me.id] = cur;
 }
-function activityTop() {                            // 本周前5（按分倒序）
+function activityTop() {                            // 本轮前5（0 分不计入榜单，按分倒序）
   var a = state.activity || {};
   var arr = Object.keys(a.scores || {}).map(function (id) { return a.scores[id]; })
+    .filter(function (t) { return (t.s || 0) > 0; })
     .sort(function (x, y) { return (y.s || 0) - (x.s || 0); });
   return arr.slice(0, 5);
+}
+function actRemainText(a) {                        // 剩余时间文案
+  if (!a || !a.enabled || !a.endAt) return '';
+  var ms = a.endAt - Date.now();
+  if (ms <= 0) return '正在结算…';
+  var h = Math.floor(ms / 3600000), m = Math.floor((ms % 3600000) / 60000);
+  return (h > 0 ? h + '小时' : '') + (m > 0 ? m + '分钟' : '') + '后结算';
 }
 function renderActivity() {
   var box = document.getElementById('activityBox');
   if (!box) return;
-  var a = state.activity || { enabled: false, weekKey: '', scores: {}, winners: [] };
-  var on = !!a.enabled;
+  var a = state.activity || { enabled: false, key: '', endAt: null, scores: {}, winners: [], over: false };
+  var stateTxt, cls;
+  if (a.enabled) { stateTxt = '🟢 活动进行中'; cls = 'act-on'; }
+  else if (a.over) { stateTxt = '⚪ 本轮已结束'; cls = 'act-off'; }
+  else { stateTxt = '🔴 活动未开启'; cls = 'act-off'; }
   var medal = ['🥇', '🥈', '🥉', '4', '5'];
   var top = activityTop();
   var rows = top.length
@@ -1423,22 +1436,33 @@ function renderActivity() {
         return '<div class="act-row"><div class="act-rank' + (i < 3 ? ' r' + (i + 1) : '') + '">' + medal[i] + '</div>' +
           '<div class="act-nick">' + esc(t.n) + '</div><div class="act-score">' + (t.s || 0) + ' 分</div></div>';
       }).join('')
-    : '<div class="act-empty">本周还没有活跃记录，快来参与！</div>';
+    : '<div class="act-empty">' + (a.enabled ? '还没有活跃记录，快来参与！' : '待活动开启') + '</div>';
+  var remain = a.enabled ? ('<div class="act-week" id="actRemain">⏳ 剩余 ' + actRemainText(a) + '</div>') : '';
   box.innerHTML =
     '<div class="act-card">' +
       '<div class="act-top">' +
-        '<div class="act-title">🔥 本周活跃值排行榜</div>' +
-        '<div class="act-state ' + (on ? 'act-on' : 'act-off') + '">' + (on ? '🟢 活动进行中' : '🔴 活动未开启') + '</div>' +
+        '<div class="act-title">🔥 活跃值排行榜</div>' +
+        '<div class="act-state ' + cls + '">' + stateTxt + '</div>' +
       '</div>' +
-      '<div class="act-week">第 ' + (a.weekKey || actWeekKey(new Date())) + ' 周 · 每周日24:00 结算 · 只显示前5名</div>' +
+      '<div class="act-week">本轮 ' + (a.key ? actDay(a.key) : '——') + ' 开启 · 持续 2 天 · 只显示前5名</div>' +
+      remain +
       '<div class="act-list">' + rows + '</div>' +
       '<div class="act-rules">' +
         '📌 活跃值规则：游玩一次游戏 <b>+1</b>（胜利 <b>+2</b>）· 殴打一次 <b>+0.5</b> · 评级一次 <b>+0.5</b> · 评论一次 <b>+0.5</b><br>' +
-        '💰 奖励：第1名 <b>20元</b> · 第2名 <b>10元</b> · 第3名 <b>5元</b>（活动结束后停止发放）<br>' +
+        '💰 奖励：第1名 <b>20元</b> · 第2名 <b>10元</b> · 第3名 <b>5元</b>（本轮结束后结算发放）<br>' +
         '📢 创作者微信号见公告处，获奖后联系领取' +
       '</div>' +
     '</div>';
 }
+/* 活动倒计时：每 30 秒更新一次剩余时间，顺带检查是否到期结算（轻量，不影响游戏） */
+setInterval(function () {
+  var el = document.getElementById('actRemain');
+  var a = state.activity;
+  if (a && a.enabled) {
+    settleActivity();
+    if (el && a.enabled) el.textContent = '⏳ 剩余 ' + actRemainText(a);
+  }
+}, 30000);
 
 /* ---------- 渲染置顶公告 ---------- */
 var noticePosed = false;   // 每个页面会话只弹一次（刷新/重新进入都会弹）
@@ -1789,18 +1813,33 @@ function bindSwitch(id, key, tip) {
 bindSwitch('swVote', 'voting', '投票');
 bindSwitch('swCmt', 'comments', '评论');
 bindSwitch('swAdd', 'adding', '推荐人物');
-/* 活跃榜活动开关（活动数据在 state.activity） */
+/* 活跃榜活动开关（开启后持续 2 天，到期自动结算；关闭 = 暂停，重新开启继续计时） */
 document.getElementById('swAct').addEventListener('change', function () {
-  state.activity = state.activity || { enabled: false, weekKey: '', scores: {}, winners: [] };
-  if (this.checked && !state.activity.weekKey) state.activity.weekKey = actWeekKey(new Date());
-  state.activity.enabled = this.checked;
+  state.activity = state.activity || { enabled: false, key: '', endAt: null, scores: {}, winners: [], over: false };
+  if (this.checked) {
+    var expired = state.activity.endAt && Date.now() >= state.activity.endAt;
+    if (!state.activity.endAt || expired) {
+      // 新一轮：重新计时 2 天（若上一轮已结算完，开新一轮）
+      state.activity.endAt = Date.now() + 2 * 86400000;
+      state.activity.key = String(Date.now());
+      if (expired || state.activity.over) {
+        state.activity.scores = {};
+        state.activity.over = false;
+      }
+    }
+    state.activity.enabled = true;
+    toast('🔥 活跃榜活动已开启（持续 2 天）');
+  } else {
+    state.activity.enabled = false;   // 暂停记分，分数保留；重新开启继续计时
+    toast('活跃榜活动已暂停');
+  }
   save();
   renderActivity();
-  toast('活跃榜活动' + (this.checked ? '已开启' : '已关闭'));
 });
 document.getElementById('adminBack').addEventListener('click', function () {
   document.getElementById('adminPanel').classList.remove('show');
   document.body.style.overflow = '';
+  refresh();
 });
 
 /* --- 后台记录 --- */
@@ -1856,22 +1895,30 @@ function renderLogs(tab) {
     });
   } else if (tab === 'act') {
     list = (state.activity && state.activity.winners || []).slice().reverse().map(function (w) {
-      return { id: w.week + '_' + w.time, who: '结算', time: w.time,
-        body: '第 ' + w.week + ' 周：' + (w.top || []).map(function (t, i) {
+      return { id: w.key + '_' + w.time, who: '结算', time: w.time,
+        body: '第 ' + actDay(Number(w.key) || Date.now()) + ' 轮：' + (w.top || []).map(function (t, i) {
           return '第' + (i + 1) + '名 ' + t.n + '（' + t.s + '分）';
         }).join('，') };
     });
     var actHead = document.createElement('div');
     actHead.className = 'act-admin-head';
     var top = activityTop();
-    actHead.innerHTML = '<div style="font-size:12px;color:var(--muted);margin:6px 0;">本周前5（每周日24:00结算）：</div>' +
+    var a = state.activity || {};
+    actHead.innerHTML = '<div style="font-size:12px;color:var(--muted);margin:6px 0;">本轮前5（活动持续2天，到期自动结算）：' +
+      (a.enabled ? ' · ⏳ 剩余 ' + actRemainText(a) : (a.over ? ' · 本轮已结束' : '')) + '</div>' +
       (top.length ? top.map(function (t, i) {
         return '<div class="l-body">第' + (i + 1) + '名 <b>' + esc(t.n) + '</b> —— ' + (t.s || 0) + ' 分</div>';
-      }).join('') : '<div class="l-body">本周暂无活跃记录</div>');
+      }).join('') : '<div class="l-body">本轮暂无活跃记录</div>');
     var boxEl = document.getElementById('adminLogs');
     var first = boxEl.firstChild;
     boxEl.insertBefore(actHead, first);
-    if (list.length === 0) list = [{ id: 'act_none', who: '', time: '', body: '还没有历届结算记录' }];
+    if (list.length === 0) {
+      var empty = document.createElement('div');
+      empty.className = 'empty';
+      empty.textContent = '还没有历届结算记录';
+      boxEl.appendChild(empty);
+      return;
+    }
   } else {
     list = state.messages.slice().reverse().map(function (m) {
       return { id: m.id, who: m.from, time: m.time,
@@ -1914,7 +1961,7 @@ document.getElementById('adminLogs').addEventListener('click', function (e) {
   } else if (tab === 'hits') {
     state.hits = (state.hits || []).filter(function (h) { return h.id !== id; });
   } else if (tab === 'act') {
-    state.activity.winners = (state.activity.winners || []).filter(function (w) { return (w.week + '_' + w.time) !== id; });
+    state.activity.winners = (state.activity.winners || []).filter(function (w) { return (w.key + '_' + w.time) !== id; });
   } else if (tab === 'adds') {
     state.people = state.people.filter(function (p) { return p.id !== id; });
     state.ratings = state.ratings.filter(function (r) { return r.personId !== id; });
