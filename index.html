@@ -289,6 +289,13 @@
     background-clip: text;
   }
   .hero { position: relative; }
+  .nick-edit-btn {
+    margin-top: 10px; padding: 7px 14px; font-size: 13px; font-weight: 700;
+    color: var(--gold); background: rgba(255, 179, 0, .12);
+    border: 1px solid rgba(255, 179, 0, .45); border-radius: 999px; cursor: pointer;
+    transition: all .2s;
+  }
+  .nick-edit-btn:hover { background: rgba(255, 179, 0, .25); transform: translateY(-1px); }
   .hero::after {
     content: ""; position: absolute; left: 50%; bottom: 6px; height: 2px; border-radius: 2px;
     background: linear-gradient(90deg, transparent, var(--accent), var(--pink), transparent);
@@ -599,6 +606,7 @@
     <h1 id="pageTitle">XXX学习最权威人物评级</h1>
     <div class="sub" id="pageSub">全网最权威 · 欢迎提名 · 纯属娱乐</div>
     <div class="count" id="pageCount"></div>
+    <button class="nick-edit-btn" id="nickEditBtn" title="点击修改你的昵称">✏️ <span id="nickShow">未设置昵称</span></button>
   </div>
 
   <!-- ===== 置顶公告（创作者后台发布） ===== -->
@@ -771,7 +779,7 @@
   <!-- ===== 昵称弹窗 ===== -->
   <div class="mask" id="nickMask">
     <div class="modal">
-      <h3>先给自己起个昵称</h3>
+      <h3 id="nickTitle">先给自己起个昵称</h3>
       <div class="tip">大家会看到你的昵称出现在评级和评论里</div>
       <div class="field">
         <label>昵称 *</label>
@@ -1053,6 +1061,7 @@ function esc(s) {
 
 /* ---------- 页面刷新 ---------- */
 function refresh() {
+  refreshNickShow();
   renderNotice();
   renderPodium();
   renderList();
@@ -1077,17 +1086,26 @@ function renderNotice() {
  * ============================================================ */
 
 /* --- 昵称（首次操作前弹出，填完自动继续刚才的事） --- */
-function ensureNick(action) {
-  if (me.nick) return true;
+function refreshNickShow() {
+  var el = document.getElementById('nickShow');
+  if (el) el.textContent = me.nick || '未设置昵称';
+}
+function ensureNick(action, edit) {
+  if (me.nick && !edit) return true;
   pending = action;
+  document.getElementById('nickTitle').textContent = edit ? '修改昵称' : '先给自己起个昵称';
+  var inp = document.getElementById('nickInput');
+  inp.value = edit && me.nick ? me.nick : '';
   openMask('nickMask');
   return false;
 }
+document.getElementById('nickEditBtn').addEventListener('click', function () { ensureNick(null, true); });
 document.getElementById('nickSubmit').addEventListener('click', function () {
   var v = document.getElementById('nickInput').value.trim();
   if (!v) { toast('昵称不能为空'); return; }
   me.nick = v.slice(0, 12);
   saveMe();
+  refreshNickShow();
   closeMask('nickMask');
   toast('欢迎 ' + me.nick + ' 👋');
   if (pending) {
