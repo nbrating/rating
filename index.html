@@ -448,6 +448,10 @@
   .act-empty { font-size: 12px; color: var(--muted); text-align: center; padding: 10px 0; }
 
   /* 弹窗入场 */
+  /* 公告弹窗：可滚动 + 强制看完 */
+  #noticeModalBox { max-height: 72vh; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  #noticeModalBox::-webkit-scrollbar { width: 4px; }
+  #noticeModalBox::-webkit-scrollbar-thumb { background: rgba(255,255,255,.2); border-radius: 4px; }
   .mask.show .modal { animation: modalIn .35s cubic-bezier(.2,.9,.3,1.15); }
   @keyframes modalIn {    0% { opacity: 0; transform: translateY(28px) scale(.92); }
     100% { opacity: 1; transform: translateY(0) scale(1); }
@@ -987,13 +991,14 @@
     <button class="danger" id="adminClear">清空全部数据（慎重！）</button>
   </div>
 
-  <!-- ===== 公告弹窗（进入时有公告就弹一次） ===== -->
+  <!-- ===== 公告弹窗（进入时有公告就弹一次；需下滑看完才能关闭） ===== -->
   <div class="mask" id="noticeMask">
-    <div class="modal" style="text-align:center;">
+    <div class="modal" id="noticeModalBox" style="text-align:center;">
       <div style="font-size:40px;line-height:1;">📢</div>
       <h3 style="color:var(--gold);margin:10px 0 4px;">置顶公告</h3>
-      <div id="noticePopText" style="font-size:16px;font-weight:700;line-height:1.8;margin:10px 0 18px;word-break:break-word;white-space:pre-line;"></div>
-      <button class="btn ok" id="noticePopClose" style="width:100%;">知道了</button>
+      <div id="noticePopText" style="font-size:16px;font-weight:700;line-height:1.8;margin:10px 0 12px;word-break:break-word;white-space:pre-line;text-align:left;"></div>
+      <div id="noticeSwipeTip" style="font-size:12px;color:var(--accent);font-weight:800;margin-bottom:10px;">👆 下滑看完公告后，即可关闭</div>
+      <button class="btn ok" id="noticePopClose" style="width:100%;opacity:.45;" disabled>知道了</button>
     </div>
   </div>
 
@@ -1718,13 +1723,36 @@ function renderNotice() {
     if (!noticePosed) {
       noticePosed = true;
       document.getElementById('noticePopText').textContent = state.notice;
+      var nb = document.getElementById('noticePopClose');
+      nb.disabled = true;                                   // 必须先下滑看完才能关闭
+      nb.style.opacity = '.45';
+      var tip = document.getElementById('noticeSwipeTip');
+      if (tip) tip.textContent = '👆 下滑看完公告后，即可关闭';
       openMask('noticeMask');
+      var nmb = document.getElementById('noticeModalBox');
+      if (nmb) nmb.scrollTop = 0;                           // 每次弹窗都从顶部开始看
     }
   } else {
     bar.style.display = 'none';
   }
 }
 document.getElementById('noticePopClose').addEventListener('click', function () { closeMask('noticeMask'); });
+/* 公告弹窗：下滑看完底部才能点"知道了" */
+document.getElementById('noticeModalBox').addEventListener('scroll', function () {
+  var el = this;
+  var atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 10;
+  var nb = document.getElementById('noticePopClose');
+  var tip = document.getElementById('noticeSwipeTip');
+  if (atBottom) {
+    nb.disabled = false;
+    nb.style.opacity = '1';
+    if (tip) tip.textContent = '✅ 已看完，点下方按钮关闭';
+  } else {
+    nb.disabled = true;
+    nb.style.opacity = '.45';
+    if (tip) tip.textContent = '👆 下滑看完公告后，即可关闭';
+  }
+});
 
 /* ============================================================
  *  交互事件
@@ -2173,12 +2201,12 @@ document.getElementById('noticeEditBtn').addEventListener('click', function () {
   openMask('noticeEditMask');
 });
 document.getElementById('noticeEditSave').addEventListener('click', function () {
-  state.notice = document.getElementById('noticeEditInput').value.trim().slice(0, 200);
+  state.notice = document.getElementById('noticeEditInput').value.trim().slice(0, 2000);
   save();
   refresh();
   closeMask('noticeEditMask');
   document.getElementById('noticePreview').textContent = state.notice || '（暂无公告）';
-  toast(state.notice ? '公告已发布' : '公告已清除');
+  toast(state.notice ? '公告已发布（' + state.notice.length + ' 字）' : '公告已清除');
 });
 function bindSwitch(id, key, tip) {
   document.getElementById(id).addEventListener('change', function () {
