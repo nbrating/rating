@@ -353,10 +353,10 @@
 
   /* 弹窗入场 */
   .mask.show .modal { animation: modalIn .35s cubic-bezier(.2,.9,.3,1.15); }
-  @keyframes modalIn {
-    0% { opacity: 0; transform: translateY(28px) scale(.92); }
+  @keyframes modalIn {    0% { opacity: 0; transform: translateY(28px) scale(.92); }
     100% { opacity: 1; transform: translateY(0) scale(1); }
   }
+  @keyframes cheatPopIn { 0% { opacity: 0; transform: scale(.5) rotate(-6deg); } 100% { opacity: 1; transform: scale(1) rotate(0); } }
 
   /* 评论 + 底部入口细节 */
   .cmt .who { text-shadow: 0 0 8px rgba(0,229,255,.45); }
@@ -2017,6 +2017,18 @@ window.__openMsg = openMsgModal;
     closeRps();
     startRace();
   }
+  function showCheatPop(cheater) {
+    var isEnemy = cheater === 'enemy';
+    var m = document.createElement('div');
+    m.id = 'cheatPop';
+    m.style.cssText = 'position:fixed;left:0;top:0;width:100%;height:100%;z-index:9999;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.55);pointer-events:none;';
+    m.innerHTML = '<div style="background:#1c1f2b;border:3px solid #ffb300;border-radius:18px;padding:26px 34px;text-align:center;box-shadow:0 0 50px rgba(255,179,0,.65);max-width:84%;animation:cheatPopIn .25s ease-out;">' +
+      '<div style="font-size:62px;line-height:1.1;">' + (isEnemy ? '😤😡🤖' : '😜😏🤖') + '</div>' +
+      '<div style="font-size:22px;font-weight:800;color:#ffb300;margin:12px 0 6px;">' + (isEnemy ? '对方等级比你高！' : '你等级比他高，快输了！') + '</div>' +
+      '<div style="font-size:18px;color:#e8e8f0;">发动耍赖技能：<b style="color:#fff;">此局不算！</b>重来！</div></div>';
+    document.body.appendChild(m);
+    setTimeout(function () { if (m.parentNode) m.parentNode.removeChild(m); }, 2000);
+  }
   function endGame(win) {
     G.busy = true;
     var b = document.getElementById('gameBody');
@@ -2030,6 +2042,7 @@ window.__openMsg = openMsgModal;
     }
     if (cheater) {
       G.cheatUsed = true;
+      showCheatPop(cheater);
       document.getElementById('gameTitle').textContent = '😤 ' + (cheater === 'enemy' ? '对方耍赖！' : '你耍赖了！');
       b.innerHTML = '<div class="result-area result-lose">' +
         '<div class="result-emoji">😤</div>' +
