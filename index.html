@@ -1175,12 +1175,15 @@ function saveLocal() { localStorage.setItem(CONFIG.storageKey, JSON.stringify(st
 /* ============ 云端共享（GitHub 仓库 data.json）============ */
 var CLOUD = {
   api: 'https://api.github.com/repos/nbrating/rating/contents/data.json',
+  apiPages: 'https://nbrating.github.io/rating/data.json',   // GitHub Pages CDN：读取不限流、无 CORS、国内可达
   token: 'ghp' + '_ysuKVYJpuNGr2hKTH2PYmv9b50vlXv2Hpv4w',
   sha: null,          // 云端文件最新版本号
   loaded: false,      // 是否已成功同步过一次云端
   queue: false,       // 有待保存的改动
   timer: null,        // 防抖定时器
-  tryCount: 0         // 冲突重试次数
+  tryCount: 0,        // 冲突重试次数
+  cache: null,        // 读取节流缓存（30 秒内不重复拉取）
+  cacheMs: 30000
 };
 function cloudHeaders() {
   return { 'Authorization': 'Bearer ' + CLOUD.token, 'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json' };
@@ -1240,8 +1243,34 @@ function cfg() {
     draw: (c.draw != null ? c.draw : 55) / 100
   };
 }
-/* 页面加载：拉取云端数据（成功则云端为准覆盖本地并刷新） */
+/* 应用云端数据到页面（统一入口） */
+function applyRemote(remote) {
+  var remoteEmpty = !remote.people || remote.people.length === 0;
+  var localHas = state.people && state.people.length > 0;
+  if (remoteEmpty && localHas) {
+    saveLocal(); scheduleCloudSave();            // 本地有、云端空 → 本地推上去
+  } else if (remoteEmpty) {
+    // 两边都空（全新设备）：用初始人物生成并推上去
+    state = load();
+    saveLocal(); scheduleCloudSave();
+    refresh();
+  } else {
+    state = normalizeState(remote);              // 云端为准
+    autoCleanup();                               // 后台记录每5天自动清理（只清投票/游戏记录）
+    settleDaily();                               // 每日榜 24h 轮换检查
+    settleActivity();                            // 到点自动结算活跃榜
+    saveLocal();
+    refresh();
+    checkScoreNotice();                          // 被管理员调分 → 弹窗提示
+  }
+}
+/* 页面加载：优先 api.github.com（实时、带 token 5000 次/小时），30 秒节流缓存；失败再走 GitHub Pages CDN（不限流兜底） */
 function cloudLoad() {
+  var now = Date.now();
+  if (CLOUD.cache && now - CLOUD.cache.t < CLOUD.cacheMs) {   // 30 秒缓存：不重复拉取，防限流
+    applyRemote(CLOUD.cache.data);
+    return;
+  }
   fetch(CLOUD.api, { headers: cloudHeaders() })
     .then(function (r) {
       if (r.status === 404) return { _404: true };   // 云端文件不存在
@@ -1262,28 +1291,22 @@ function cloudLoad() {
         var remote = JSON.parse(b64Decode(d.content));
         CLOUD.sha = d.sha;
         CLOUD.loaded = true;
-        var remoteEmpty = !remote.people || remote.people.length === 0;
-        var localHas = state.people && state.people.length > 0;
-        if (remoteEmpty && localHas) {
-          saveLocal(); scheduleCloudSave();            // 本地有、云端空 → 本地推上去
-        } else if (remoteEmpty) {
-          // 两边都空（全新设备）：用初始人物生成并推上去
-          state = load();
-          saveLocal(); scheduleCloudSave();
-          refresh();
-        } else {
-          state = normalizeState(remote);              // 云端为准
-          autoCleanup();                               // 后台记录每5天自动清理（只清投票/游戏记录）
-          settleDaily();                               // 每日榜 24h 轮换检查
-          settleActivity();                            // 到点自动结算活跃榜
-          saveLocal();
-          refresh();
-          checkScoreNotice();                          // 被管理员调分 → 弹窗提示
-        }
+        CLOUD.cache = { t: Date.now(), data: remote };
+        applyRemote(remote);
       }
     })
     .catch(function () {
-      toast('云端连接失败，当前为离线模式，数据暂不互通');
+      // api 不可达（限流/网络）→ 走 GitHub Pages CDN（同源、不限流、国内可达）
+      fetch(CLOUD.apiPages)
+        .then(function (r) { if (!r.ok) throw new Error('pages'); return r.json(); })
+        .then(function (remote) {
+          CLOUD.cache = { t: Date.now(), data: remote };
+          CLOUD.loaded = true;
+          applyRemote(remote);
+        })
+        .catch(function () {
+          toast('云端连接失败，当前为离线模式，数据暂不互通');
+        });
     });
 }
 /* 防抖保存：连续操作合并为一次上传 */
@@ -1342,33 +1365,44 @@ function doCloudSave() {
   if (!CLOUD.queue) return;
   CLOUD.queue = false;
   trimState();   // 上传前自动清理，防止文件越滚越大
-  var body = JSON.stringify({
-    message: 'sync ' + now(),
-    content: b64Encode(JSON.stringify(state)),
-    sha: CLOUD.sha
-  });
-  fetch(CLOUD.api, { method: 'PUT', headers: cloudHeaders(), body: body })
-    .then(function (r) { return r.json(); })
-    .then(function (d) {
-      if (d.content) { CLOUD.sha = d.content.sha; CLOUD.tryCount = 0; return; }
-      var msg = d.message || '';
-      if (/sha|version|conflict/i.test(msg)) {
-        // 版本冲突（别人刚写过）：取最新版本号后重存，最多 3 次
-        CLOUD.tryCount++;
-        if (CLOUD.tryCount <= 3) {
-          fetch(CLOUD.api, { headers: cloudHeaders() })
-            .then(function (r) { return r.json(); })
-            .then(function (dr) {
-              if (dr.sha) { CLOUD.sha = dr.sha; CLOUD.queue = true; doCloudSave(); }
-            }).catch(function () {});
-        } else { CLOUD.tryCount = 0; }
-      } else {
-        setTimeout(function () { CLOUD.queue = true; doCloudSave(); }, 5000);
-      }
-    })
-    .catch(function () {
-      setTimeout(function () { CLOUD.queue = true; doCloudSave(); }, 5000);
+  var doPut = function () {
+    var body = JSON.stringify({
+      message: 'sync ' + now(),
+      content: b64Encode(JSON.stringify(state)),
+      sha: CLOUD.sha
     });
+    fetch(CLOUD.api, { method: 'PUT', headers: cloudHeaders(), body: body })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (d.content) { CLOUD.sha = d.content.sha; CLOUD.tryCount = 0; return; }
+        var msg = d.message || '';
+        if (/sha|version|conflict/i.test(msg)) {
+          // 版本冲突（别人刚写过）：取最新版本号后重存，最多 3 次
+          CLOUD.tryCount++;
+          if (CLOUD.tryCount <= 3) {
+            fetch(CLOUD.api, { headers: cloudHeaders() })
+              .then(function (r) { return r.json(); })
+              .then(function (dr) {
+                if (dr.sha) { CLOUD.sha = dr.sha; CLOUD.queue = true; doCloudSave(); }
+              }).catch(function () {});
+          } else { CLOUD.tryCount = 0; }
+        } else {
+          setTimeout(function () { CLOUD.queue = true; doCloudSave(); }, 5000);
+        }
+      })
+      .catch(function () {
+        setTimeout(function () { CLOUD.queue = true; doCloudSave(); }, 5000);
+      });
+  };
+  if (CLOUD.sha) { doPut(); return; }          // 已有版本号直接写
+  // 读取已改走 CDN（不更新 sha）：首次保存先取一次最新版本号
+  fetch(CLOUD.api, { headers: cloudHeaders() })
+    .then(function (r) { return r.json(); })
+    .then(function (dr) {
+      if (dr.sha) { CLOUD.sha = dr.sha; doPut(); }
+      else { CLOUD.queue = true; setTimeout(doCloudSave, 5000); }
+    })
+    .catch(function () { CLOUD.queue = true; setTimeout(doCloudSave, 5000); });
 }
 cloudLoad();
 
