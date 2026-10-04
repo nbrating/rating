@@ -874,6 +874,10 @@
       <div class="switch-row"><span>允许推荐人物</span><label class="switch"><input type="checkbox" id="swAdd"><span class="slider"></span></label></div>
       <div class="switch-row"><span>🔥 活跃榜活动</span><label class="switch"><input type="checkbox" id="swAct"><span class="slider"></span></label></div>
       <div style="font-size:11px;color:var(--muted);padding:0 2px;">关掉某个开关，表层对应按钮立刻失效，方便控制场面</div>
+      <div style="margin-top:10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        <button class="btn ghost" id="adminBindBtn" style="padding:8px 14px;font-size:12px;">👑 绑定此设备为管理员</button>
+        <span style="font-size:11px;color:var(--muted);">管理员：不参与积分榜 · 名字占用保护 · 后台免密进出（每7天需输一次密码）</span>
+      </div>
     </div>
 
     <div class="notice-box" style="margin-bottom:12px;">
@@ -1057,7 +1061,8 @@ function load() {
       d.hits = d.hits || [];                                        // 殴打记录
       d.activity = d.activity || { enabled: false, key: '', endAt: null, scores: {}, winners: [], over: false };
   d.adminHash = d.adminHash || '';    // 云端统一后台密码指纹（换设备密码保持一致）
-  d.playerPasses = d.playerPasses || {};   // 玩家私人密码（云端存，后台可见，表层不公开）  // 活跃值活动
+  d.playerPasses = d.playerPasses || {};   // 玩家私人密码（云端存，后台可见，表层不公开）
+  d.admin = d.admin || { userId: '', nick: '' };   // 管理员账号（不参与积分榜、名字占用保护、后台免密）  // 活跃值活动
       // 旧版"待审核"机制已移除：历史 pending 人物直接上架
       (d.people || []).forEach(function (p) { if (p.status === 'pending') p.status = 'approved'; });
       return d;
@@ -1104,6 +1109,7 @@ function normalizeState(d) {
   d.activity = d.activity || { enabled: false, key: '', endAt: null, scores: {}, winners: [], over: false };
   d.adminHash = d.adminHash || '';    // 云端统一后台密码指纹（换设备密码保持一致）
   d.playerPasses = d.playerPasses || {};   // 玩家私人密码（云端存，后台可见，表层不公开）
+  d.admin = d.admin || { userId: '', nick: '' };   // 管理员账号（不参与积分榜、名字占用保护、后台免密）
   if (d.activity) {   // 兼容旧格式活动数据（缺失字段补默认）
     if (d.activity.scores === undefined) d.activity.scores = {};
     if (d.activity.winners === undefined) d.activity.winners = [];
@@ -1264,6 +1270,9 @@ function saveMe() { localStorage.setItem(CONFIG.meKey, JSON.stringify(me)); }
 
 function now() { return new Date().toLocaleString('zh-CN', { hour12: false }); }
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+function isAdmin() {   // 当前设备是否为管理员（绑定 userId）
+  return !!(state.admin && state.admin.userId && me.id === state.admin.userId);
+}
 
 /* ---------- 弹窗工具 ---------- */
 function openMask(id) { document.getElementById(id).classList.add('show'); }
@@ -1453,9 +1462,10 @@ function settleActivity() {                        // 活动到期（开启满 2
     save();
   }
 }
-function activityAdd(pts) {                         // 给当前玩家加活跃值（活动关闭时不加）
+function activityAdd(pts) {                         // 给当前玩家加活跃值（活动关闭/管理员不加分）
   var a = state.activity;
   if (!a || !a.enabled || !(pts > 0)) return;
+  if (isAdmin()) return;                             // 管理员不参与积分榜
   a.scores = a.scores || {};
   var cur = a.scores[me.id] || { n: me.nick || '匿名', s: 0 };
   cur.n = me.nick || cur.n;
@@ -1600,7 +1610,15 @@ document.getElementById('pwdViewClose').addEventListener('click', function () { 
 document.getElementById('nickSubmit').addEventListener('click', function () {
   var v = document.getElementById('nickInput').value.trim();
   if (!v) { toast('昵称不能为空'); return; }
+  if (state.admin && state.admin.nick && v === state.admin.nick && !isAdmin()) {
+    toast('这个名字已被占用，换一个吧');
+    return;
+  }
   me.nick = v.slice(0, 12);
+  if (isAdmin() && me.nick !== state.admin.nick) {   // 管理员改名：同步保护名
+    state.admin.nick = me.nick;
+    save();
+  }
   saveMe();
   refreshNickShow();
   closeMask('nickMask');
@@ -1792,12 +1810,24 @@ document.getElementById('addSubmit').addEventListener('click', function () {
 /* --- 创作者入口 --- */
 document.getElementById('creatorEntry').addEventListener('click', function () {
   document.getElementById('pwdInput').value = '';
+  if (isAdmin()) {
+    // 管理员：7 天内免密进出；超过 7 天要求输一次密码（防止忘记）
+    var last = localStorage.getItem('admin_pwd_last');
+    if (last && (Date.now() - Number(last)) < 7 * 86400000) {
+      openAdmin();
+      toast('🔓 管理员免密进入');
+      return;
+    }
+    openMask('pwdMask');
+    return;
+  }
   openMask('pwdMask');
 });
 document.getElementById('pwdSubmit').addEventListener('click', function () {
   var v = document.getElementById('pwdInput').value;
   if (cyrb53(v, 2026) !== currentAdminHash()) { toast('密码不对哦'); return; }
   closeMask('pwdMask');
+  if (isAdmin()) localStorage.setItem('admin_pwd_last', String(Date.now()));  // 记一次验密时间
   openAdmin();
 });
 
@@ -1908,6 +1938,16 @@ function bindSwitch(id, key, tip) {
 bindSwitch('swVote', 'voting', '投票');
 bindSwitch('swCmt', 'comments', '评论');
 bindSwitch('swAdd', 'adding', '推荐人物');
+/* 绑定管理员（换设备找回管理员身份；只有输对密码进入后台的人能操作） */
+document.getElementById('adminBindBtn').addEventListener('click', function () {
+  state.admin = state.admin || {};
+  state.admin.userId = me.id;
+  state.admin.nick = me.nick || state.admin.nick || '再次相枫';
+  save();
+  localStorage.setItem('admin_pwd_last', String(Date.now()));   // 绑定即免密 7 天
+  toast('👑 此设备已绑定为管理员');
+});
+
 /* 活跃榜活动开关（开启后持续 2 天，到期自动结算；关闭 = 暂停，重新开启继续计时） */
 document.getElementById('swAct').addEventListener('change', function () {
   state.activity = state.activity || { enabled: false, key: '', endAt: null, scores: {}, winners: [], over: false };
