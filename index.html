@@ -919,6 +919,16 @@
       <div class="switch-row"><span>允许评论</span><label class="switch"><input type="checkbox" id="swCmt"><span class="slider"></span></label></div>
       <div class="switch-row"><span>允许推荐人物</span><label class="switch"><input type="checkbox" id="swAdd"><span class="slider"></span></label></div>
       <div class="switch-row" style="flex-wrap:wrap;"><span>🔥 活跃榜活动</span><label class="switch"><input type="checkbox" id="swAct"><span class="slider"></span></label><input id="actHours" type="number" min="1" max="720" style="width:64px;padding:4px;border-radius:6px;border:1px solid var(--line);background:rgba(255,255,255,.05);color:var(--text);font-size:12px;" value="48"> 小时</div>
+      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:8px;padding:0 2px;">
+        <span style="font-size:11px;color:var(--gold);font-weight:800;">💰 奖励金额（元）</span>
+        <input id="rw1" type="number" min="0" max="9999" style="width:52px;padding:4px;border-radius:6px;border:1px solid var(--line);background:rgba(255,255,255,.05);color:var(--text);font-size:12px;">
+        <span style="font-size:11px;color:var(--muted);">第1名</span>
+        <input id="rw2" type="number" min="0" max="9999" style="width:52px;padding:4px;border-radius:6px;border:1px solid var(--line);background:rgba(255,255,255,.05);color:var(--text);font-size:12px;">
+        <span style="font-size:11px;color:var(--muted);">第2名</span>
+        <input id="rw3" type="number" min="0" max="9999" style="width:52px;padding:4px;border-radius:6px;border:1px solid var(--line);background:rgba(255,255,255,.05);color:var(--text);font-size:12px;">
+        <span style="font-size:11px;color:var(--muted);">第3名</span>
+        <span style="font-size:10px;color:var(--muted);">（填 0 则该项不奖励）</span>
+      </div>
       <div style="font-size:11px;color:var(--muted);padding:0 2px;">关掉某个开关，表层对应按钮立刻失效，方便控制场面</div>
       <div style="margin-top:10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
         <button class="btn ghost" id="adminBindBtn" style="padding:8px 14px;font-size:12px;">👑 绑定此设备为管理员</button>
@@ -1133,7 +1143,8 @@ function load() {
       d.gameCfg = d.gameCfg || { enabled: true, burst: 60, fail: 20, eBurst: 40, eSpeed: 0, draw: 55 };
       d.gameLogs = d.gameLogs || [];                                // 游戏战绩记录
       d.hits = d.hits || [];                                        // 寿来~记录
-      d.activity = d.activity || { enabled: false, key: '', endAt: null, scores: {}, winners: [], over: false, freezeUntil: null };
+      d.activity = d.activity || { enabled: false, key: '', endAt: null, scores: {}, winners: [], over: false, freezeUntil: null, rewards: [20, 10, 5] };
+      if (d.activity && (!d.activity.rewards || d.activity.rewards.length !== 3)) d.activity.rewards = [20, 10, 5];
       d.daily = d.daily || { endAt: null, scores: {} };             // 每日排行榜（每24小时一轮）
   d.adminHash = d.adminHash || '';    // 云端统一后台密码指纹（换设备密码保持一致）
   d.playerPasses = d.playerPasses || {};   // 玩家私人密码（云端存，后台可见，表层不公开）
@@ -1182,7 +1193,8 @@ function normalizeState(d) {
   d.gameCfg = d.gameCfg || { enabled: true, burst: 60, fail: 20, eBurst: 40, eSpeed: 0, draw: 55 };
   d.gameLogs = d.gameLogs || [];
   d.hits = d.hits || [];
-  d.activity = d.activity || { enabled: false, key: '', endAt: null, scores: {}, winners: [], over: false, freezeUntil: null };
+  d.activity = d.activity || { enabled: false, key: '', endAt: null, scores: {}, winners: [], over: false, freezeUntil: null, rewards: [20, 10, 5] };
+  if (d.activity && (!d.activity.rewards || d.activity.rewards.length !== 3)) d.activity.rewards = [20, 10, 5];
   d.daily = d.daily || { endAt: null, scores: {} };   // 每日排行榜（每24小时一轮，固定存在）
   d.adminHash = d.adminHash || '';    // 云端统一后台密码指纹（换设备密码保持一致）
   d.playerPasses = d.playerPasses || {};   // 玩家私人密码（云端存，后台可见，表层不公开）
@@ -1682,7 +1694,7 @@ function renderActivity() {
       '<div class="act-list">' + rows + '</div>' +
       '<div class="act-rules">' +
         '📌 活跃值规则：游玩一次游戏 <b>+1</b>（胜利 <b>+2</b>）· 寿来~一次 <b>+0.5</b> · 评级一次 <b>+0.5</b> · 评论一次 <b>+0.5</b> · 添加人物 <b>+1.5</b><br>' +
-        '💰 奖励：第1名 <b>20元</b> · 第2名 <b>10元</b> · 第3名 <b>5元</b>（活动结束结算发放）<br>' +
+        '💰 奖励：第1名 <b>' + ((a.rewards && a.rewards[0]) || 0) + '元</b> · 第2名 <b>' + ((a.rewards && a.rewards[1]) || 0) + '元</b> · 第3名 <b>' + ((a.rewards && a.rewards[2]) || 0) + '元</b>（活动结束结算发放）<br>' +
         '📢 创作者微信号见公告处，获奖后联系领取' +
       '</div>' +
     '</div>';
@@ -2076,6 +2088,10 @@ function openAdmin(limited) {
   document.getElementById('swCmt').checked = state.flags.comments;
   document.getElementById('swAdd').checked = state.flags.adding;
   document.getElementById('swAct').checked = !!(state.activity && state.activity.enabled);
+  var rwDef = (state.activity && state.activity.rewards) || [20, 10, 5];
+  document.getElementById('rw1').value = rwDef[0];
+  document.getElementById('rw2').value = rwDef[1];
+  document.getElementById('rw3').value = rwDef[2];
   document.getElementById('swGame').checked = !(state.gameCfg && state.gameCfg.enabled === false);
   document.getElementById('gcBurst').value = (state.gameCfg && state.gameCfg.burst != null) ? state.gameCfg.burst : 60;
   document.getElementById('gcFail').value = (state.gameCfg && state.gameCfg.fail != null) ? state.gameCfg.fail : 20;
@@ -2183,6 +2199,22 @@ document.getElementById('adminBindBtn').addEventListener('click', function () {
   localStorage.setItem('admin_pwd_last', String(Date.now()));   // 绑定即免密 7 天
   toast('👑 此设备已绑定为管理员');
 });
+
+/* 活跃榜奖励金额（后台可随时更改表层显示） */
+function saveRewards() {
+  state.activity = state.activity || { rewards: [20, 10, 5] };
+  state.activity.rewards = [
+    Math.max(0, Number(document.getElementById('rw1').value) || 0),
+    Math.max(0, Number(document.getElementById('rw2').value) || 0),
+    Math.max(0, Number(document.getElementById('rw3').value) || 0)
+  ];
+  save();
+  renderActivity();
+  toast('奖励金额已更新：第1名 ' + state.activity.rewards[0] + '元 · 第2名 ' + state.activity.rewards[1] + '元 · 第3名 ' + state.activity.rewards[2] + '元');
+}
+document.getElementById('rw1').addEventListener('change', saveRewards);
+document.getElementById('rw2').addEventListener('change', saveRewards);
+document.getElementById('rw3').addEventListener('change', saveRewards);
 
 /* 活跃榜活动开关（开启后持续 2 天，到期自动结算；关闭 = 暂停，重新开启继续计时） */
 document.getElementById('swAct').addEventListener('change', function () {
