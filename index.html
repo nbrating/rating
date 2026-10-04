@@ -199,6 +199,16 @@
     padding: 18px 16px 40px;
   }
   .admin.show { display: block; }
+  /* 受限模式（非管理员输对密码进入）：只能动四个开关，禁止滚动 */
+  .admin.limited { overflow: hidden !important; }
+  .admin.limited #adminStats,
+  .admin.limited #adminNoticeBox,
+  .admin.limited #adminAdjBox,
+  .admin.limited .tabs,
+  .admin.limited .danger,
+  .admin.limited #adminBindBtn,
+  .admin.limited #adminBindBtn + span,
+  .admin.limited .export-row { display: none !important; }
   .admin .top { display: flex; align-items: center; margin-bottom: 16px; }
   .admin .top .back { color: var(--accent); font-size: 13px; font-weight: 700; cursor: pointer; }
   .admin .top h2 { font-size: 18px; font-weight: 900; margin: 0 auto; }
@@ -869,14 +879,14 @@
       <h2>创作者后台</h2>
       <span style="width:60px;"></span>
     </div>
-    <div class="stats">
+    <div class="stats" id="adminStats">
       <div class="st"><b id="stPeople">0</b><span>人物</span></div>
       <div class="st"><b id="stRates">0</b><span>评级数</span></div>
       <div class="st"><b id="stCmts">0</b><span>评论数</span></div>
       <div class="st"><b id="stScore">0</b><span>总分</span></div>
     </div>
 
-    <div class="notice-box">
+    <div class="notice-box" id="adminNoticeBox">
       <div class="field" style="margin-bottom:0;">
         <label>置顶公告（显示在页面最上方，留空则不显示）</label>
         <input id="noticeInput" placeholder="例如：今晚8点截止投票，抓紧！">
@@ -884,11 +894,11 @@
       <div class="row2"><button class="btn ok" id="noticeSave">发布 / 更新公告</button></div>
     </div>
 
-    <div style="margin-bottom:12px;">
+    <div id="adminSwitches" style="margin-bottom:12px;">
       <div class="switch-row"><span>允许投票</span><label class="switch"><input type="checkbox" id="swVote"><span class="slider"></span></label></div>
       <div class="switch-row"><span>允许评论</span><label class="switch"><input type="checkbox" id="swCmt"><span class="slider"></span></label></div>
       <div class="switch-row"><span>允许推荐人物</span><label class="switch"><input type="checkbox" id="swAdd"><span class="slider"></span></label></div>
-      <div class="switch-row"><span>🔥 活跃榜活动</span><label class="switch"><input type="checkbox" id="swAct"><span class="slider"></span></label></div>
+      <div class="switch-row" style="flex-wrap:wrap;"><span>🔥 活跃榜活动</span><label class="switch"><input type="checkbox" id="swAct"><span class="slider"></span></label><input id="actHours" type="number" min="1" max="720" style="width:64px;padding:4px;border-radius:6px;border:1px solid var(--line);background:rgba(255,255,255,.05);color:var(--text);font-size:12px;" value="48"> 小时</div>
       <div style="font-size:11px;color:var(--muted);padding:0 2px;">关掉某个开关，表层对应按钮立刻失效，方便控制场面</div>
       <div style="margin-top:10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
         <button class="btn ghost" id="adminBindBtn" style="padding:8px 14px;font-size:12px;">👑 绑定此设备为管理员</button>
@@ -896,7 +906,7 @@
       </div>
     </div>
 
-    <div class="notice-box" style="margin-bottom:12px;">
+    <div class="notice-box" id="adminAdjBox" style="margin-bottom:12px;">
       <div style="font-size:12px;font-weight:800;color:var(--gold);margin-bottom:8px;">🎛️ 手动调分（直接给任意角色加减分，排行榜立即生效）</div>
       <div class="field" style="margin-bottom:6px;">
         <label>选择人物</label>
@@ -999,6 +1009,17 @@
     </div>
   </div>
 
+  <!-- ===== 被管理员调分提示 ===== -->
+  <div class="mask" id="scoreNoticeMask">
+    <div class="modal" style="text-align:center;padding:22px 20px;">
+      <div style="font-size:34px;">📣</div>
+      <div class="tip" id="snText" style="margin-top:10px;font-size:14px;"></div>
+      <div class="row2" style="margin-top:16px;">
+        <button class="btn ok" data-close="scoreNoticeMask" style="width:100%;">知道了</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ===== 导出弹窗 ===== -->
   <div class="mask" id="exportMask">
     <div class="modal">
@@ -1079,6 +1100,7 @@ function load() {
       d.activity = d.activity || { enabled: false, key: '', endAt: null, scores: {}, winners: [], over: false };
   d.adminHash = d.adminHash || '';    // 云端统一后台密码指纹（换设备密码保持一致）
   d.playerPasses = d.playerPasses || {};   // 玩家私人密码（云端存，后台可见，表层不公开）
+  d.scoreNotices = d.scoreNotices || {};   // 管理员调分提示（按玩家存最近一条，玩家进入时弹窗）
   d.admin = d.admin || { userId: '', nick: '' };   // 管理员账号（不参与积分榜、名字占用保护、后台免密）  // 活跃值活动
       // 旧版"待审核"机制已移除：历史 pending 人物直接上架
       (d.people || []).forEach(function (p) { if (p.status === 'pending') p.status = 'approved'; });
@@ -1126,6 +1148,7 @@ function normalizeState(d) {
   d.activity = d.activity || { enabled: false, key: '', endAt: null, scores: {}, winners: [], over: false };
   d.adminHash = d.adminHash || '';    // 云端统一后台密码指纹（换设备密码保持一致）
   d.playerPasses = d.playerPasses || {};   // 玩家私人密码（云端存，后台可见，表层不公开）
+  d.scoreNotices = d.scoreNotices || {};   // 管理员调分提示（按玩家存最近一条，玩家进入时弹窗）
   d.admin = d.admin || { userId: '', nick: '' };   // 管理员账号（不参与积分榜、名字占用保护、后台免密）
   if (d.activity) {   // 兼容旧格式活动数据（缺失字段补默认）
     if (d.activity.scores === undefined) d.activity.scores = {};
@@ -1185,9 +1208,10 @@ function cloudLoad() {
           refresh();
         } else {
           state = normalizeState(remote);              // 云端为准
-          settleActivity();                            // 到周日24:00自动结算活跃榜
+          settleActivity();                            // 到点自动结算活跃榜
           saveLocal();
           refresh();
+          checkScoreNotice();                          // 被管理员调分 → 弹窗提示
         }
       }
     })
@@ -1226,6 +1250,15 @@ function trimState() {
       var pkeep = {};
       pks.slice(-300).forEach(function (k) { pkeep[k] = state.playerPasses[k]; });
       state.playerPasses = pkeep;
+    }
+  }
+  // 调分提示：最多保留 300 条（每人一条）
+  if (state.scoreNotices) {
+    var nks = Object.keys(state.scoreNotices);
+    if (nks.length > 300) {
+      var nkeep = {};
+      nks.slice(-300).forEach(function (k) { nkeep[k] = state.scoreNotices[k]; });
+      state.scoreNotices = nkeep;
     }
   }
 }
@@ -1530,7 +1563,7 @@ function renderActivity() {
       remain +
       '<div class="act-list">' + rows + '</div>' +
       '<div class="act-rules">' +
-        '📌 活跃值规则：游玩一次游戏 <b>+1</b>（胜利 <b>+2</b>）· 殴打一次 <b>+0.5</b> · 评级一次 <b>+0.5</b> · 评论一次 <b>+0.5</b><br>' +
+        '📌 活跃值规则：游玩一次游戏 <b>+1</b>（胜利 <b>+2</b>）· 殴打一次 <b>+0.5</b> · 评级一次 <b>+0.5</b> · 评论一次 <b>+0.5</b> · 添加人物 <b>+1.5</b><br>' +
         '💰 奖励：第1名 <b>20元</b> · 第2名 <b>10元</b> · 第3名 <b>5元</b>（本轮结束后结算发放）<br>' +
         '📢 创作者微信号见公告处，获奖后联系领取' +
       '</div>' +
@@ -1819,6 +1852,7 @@ document.getElementById('addSubmit').addEventListener('click', function () {
   me.addQuota -= 1;
   saveMe();
   save();
+  activityAdd(1.5);      // 活跃值：加人物 +1.5
   closeMask('addMask');
   refresh();
   toast('「' + name + '」已上架，还剩下 ' + me.addQuota + ' 次添加机会');
@@ -1844,12 +1878,17 @@ document.getElementById('pwdSubmit').addEventListener('click', function () {
   var v = document.getElementById('pwdInput').value;
   if (cyrb53(v, 2026) !== currentAdminHash()) { toast('密码不对哦'); return; }
   closeMask('pwdMask');
-  if (isAdmin()) localStorage.setItem('admin_pwd_last', String(Date.now()));  // 记一次验密时间
-  openAdmin();
+  if (isAdmin()) {
+    localStorage.setItem('admin_pwd_last', String(Date.now()));  // 记一次验密时间
+    openAdmin();                                                 // 管理员 = 全功能
+  } else {
+    openAdmin(true);                                             // 非管理员破解 = 受限模式
+  }
 });
 
-function openAdmin() {
+function openAdmin(limited) {
   document.getElementById('adminPanel').classList.add('show');
+  document.getElementById('adminPanel').classList.toggle('limited', !!limited);
   document.body.style.overflow = 'hidden';
   var online = state.people.filter(function (p) { return p.status !== 'pending'; }).length;
   document.getElementById('stPeople').textContent = online;
@@ -1971,8 +2010,10 @@ document.getElementById('swAct').addEventListener('change', function () {
   if (this.checked) {
     var expired = state.activity.endAt && Date.now() >= state.activity.endAt;
     if (!state.activity.endAt || expired) {
-      // 新一轮：重新计时 2 天（若上一轮已结算完，开新一轮）
-      state.activity.endAt = Date.now() + 2 * 86400000;
+      // 新一轮：按后台设定的时长重新计时（默认 48 小时）
+      var hours = parseFloat(document.getElementById('actHours').value);
+      if (isNaN(hours) || hours < 1) hours = 48;
+      state.activity.endAt = Date.now() + hours * 3600000;
       state.activity.key = String(Date.now());
       if (expired || state.activity.over) {
         state.activity.scores = {};
@@ -1980,7 +2021,7 @@ document.getElementById('swAct').addEventListener('change', function () {
       }
     }
     state.activity.enabled = true;
-    toast('🔥 活跃榜活动已开启（持续 2 天）');
+    toast('🔥 活跃榜活动已开启（持续 ' + Math.round(hours || 48) + ' 小时）');
   } else {
     state.activity.enabled = false;   // 暂停记分，分数保留；重新开启继续计时
     toast('活跃榜活动已暂停');
@@ -2019,10 +2060,23 @@ function adjustPlayerScore(uid, d) {
   };
   cur.s = Math.max(0, Math.round((cur.s + d) * 10) / 10);   // 不低于 0
   state.activity.scores[uid] = cur;
+  (state.scoreNotices = state.scoreNotices || {})[uid] = { d: d, t: now() };  // 给玩家留调分提示
   save();
   renderLogs('players');
   refresh();
   toast('已给「' + cur.n + '」' + (d > 0 ? '+' : '') + d + ' 活跃值');
+}
+
+/* 玩家进入页面时：被管理员调过分的弹窗提示（每个玩家只弹最近一次，本地去重） */
+function checkScoreNotice() {
+  try {
+    var n = state.scoreNotices && state.scoreNotices[me.id];
+    if (!n) return;
+    if (localStorage.getItem('rating_sn_seen') === String(n.t)) return;
+    localStorage.setItem('rating_sn_seen', String(n.t));
+    document.getElementById('snText').innerHTML = '管理员给你调整了活跃值：<b style="font-size:18px;color:' + (n.d >= 0 ? '#4dff88' : '#ff6b6b') + '">' + (n.d >= 0 ? '+' : '') + n.d + '</b> 分';
+    document.getElementById('scoreNoticeMask').classList.add('show');
+  } catch (e) {}
 }
 
 function renderLogs(tab) {
@@ -2101,6 +2155,10 @@ function renderLogs(tab) {
     });
     Object.keys(scoresM).forEach(function (k) {
       if (!pmap[k]) pmap[k] = { nick: scoresM[k].n || '匿名', s: scoresM[k].s || 0, p: '' };
+    });
+    /* 追加所有"注册过名字"的玩家（评过级 / 评论过 / 设过密码 / 有活跃值的都算） */
+    state.ratings.concat(state.comments).forEach(function (r) {
+      if (r && r.userId && !pmap[r.userId]) pmap[r.userId] = { nick: r.nick || '匿名', s: 0, p: '' };
     });
     var plist = Object.keys(pmap).map(function (k) { return { id: k, nick: pmap[k].nick, s: pmap[k].s, p: pmap[k].p }; })
       .sort(function (a, b) { return b.s - a.s; });
