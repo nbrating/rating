@@ -224,6 +224,22 @@
     float: right; font-size: 11px; color: var(--red); cursor: pointer; border: 1px solid rgba(255,77,79,.3);
     border-radius: 6px; padding: 1px 6px; background: rgba(255,77,79,.08);
   }
+  /* 玩家管理行 */
+  .prow {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 9px 12px; margin-bottom: 8px; font-size: 12px;
+  }
+  .prow-rk { width: 24px; height: 24px; border-radius: 7px; display: flex; align-items: center; justify-content: center; font-weight: 900; background: rgba(255,255,255,.07); font-size: 12px; }
+  .prow-nk { flex: 1; min-width: 60px; font-weight: 800; font-size: 13px; }
+  .prow-sc { color: #ffb300; font-weight: 800; }
+  .prow-pw { color: #4dff88; }
+  .prow-ops { display: flex; align-items: center; gap: 5px; }
+  .pbtn {
+    font-size: 11px; font-weight: 800; cursor: pointer; padding: 4px 9px; border-radius: 7px;
+    border: 1px solid var(--line); background: rgba(255,255,255,.07); color: var(--text);
+  }
+  .pbtn:active { transform: scale(.93); }
   .danger {
     width: 100%; height: 40px; margin-top: 18px; border-radius: 10px; border: 1px solid rgba(255,77,79,.4);
     background: rgba(255,77,79,.1); color: var(--red); font-size: 13px; font-weight: 700; cursor: pointer;
@@ -923,6 +939,7 @@
       <div class="tab" data-tab="games">🎮 游戏战绩</div>
       <div class="tab" data-tab="hits">👊 殴打记录</div>
       <div class="tab" data-tab="act">🔥 活跃榜</div>
+      <div class="tab" data-tab="players">👥 玩家管理</div>
     </div>
     <div id="adminLogs"></div>
     <button class="btn ok" id="adminPwd" style="width:100%;margin-bottom:10px;">修改创作者密码</button>
@@ -1987,8 +2004,25 @@ document.querySelectorAll('.tabs .tab').forEach(function (t) {
 });
 
 function personName(pid) {
-  var p = state.people.find(function (x) { return x.id === pid; });
-  return p ? p.name : '（已删除的人物）';
+  var p = state.people.find(function (x) { return x.id === pid; });  return p ? p.name : '（已删除的人物）';
+}
+
+/* 玩家管理：实时给玩家加/扣活跃值 */
+function adjustPlayerScore(uid, d) {
+  if (!uid) return;
+  if (state.admin && state.admin.userId && uid === state.admin.userId) { toast('管理员不参与积分榜'); return; }
+  state.activity = state.activity || { scores: {} };
+  state.activity.scores = state.activity.scores || {};
+  var cur = state.activity.scores[uid] || {
+    n: (state.playerPasses && state.playerPasses[uid] && state.playerPasses[uid].n) || '匿名',
+    s: 0
+  };
+  cur.s = Math.max(0, Math.round((cur.s + d) * 10) / 10);   // 不低于 0
+  state.activity.scores[uid] = cur;
+  save();
+  renderLogs('players');
+  refresh();
+  toast('已给「' + cur.n + '」' + (d > 0 ? '+' : '') + d + ' 活跃值');
 }
 
 function renderLogs(tab) {
@@ -2057,6 +2091,44 @@ function renderLogs(tab) {
       boxEl.appendChild(empty);
       return;
     }
+  } else if (tab === 'players') {
+    /* 玩家管理：全部注册玩家（按活跃值降序，与榜单一致）+ 实时加减分 */
+    var scoresM = (state.activity && state.activity.scores) || {};
+    var passesM = state.playerPasses || {};
+    var pmap = {};
+    Object.keys(passesM).forEach(function (k) {
+      pmap[k] = { nick: passesM[k].n || '匿名', s: (scoresM[k] && scoresM[k].s) || 0, p: passesM[k].p || '' };
+    });
+    Object.keys(scoresM).forEach(function (k) {
+      if (!pmap[k]) pmap[k] = { nick: scoresM[k].n || '匿名', s: scoresM[k].s || 0, p: '' };
+    });
+    var plist = Object.keys(pmap).map(function (k) { return { id: k, nick: pmap[k].nick, s: pmap[k].s, p: pmap[k].p }; })
+      .sort(function (a, b) { return b.s - a.s; });
+    var pHtml = '';
+    if (!plist.length) {
+      pHtml = '<div class="empty">还没有玩家注册</div>';
+    } else {
+      var adminId = (state.admin && state.admin.userId) || '';
+      pHtml = '<div style="font-size:11px;color:var(--muted);margin-bottom:6px;">共 ' + plist.length + ' 位玩家 · 按活跃值排序 · 点击 ± 实时调整</div>' +
+        plist.map(function (pl, i) {
+          var isAdminRow = pl.id === adminId;
+          return '<div class="prow">' +
+            '<span class="prow-rk">' + (isAdminRow ? '👑' : (i + 1)) + '</span>' +
+            '<span class="prow-nk">' + esc(pl.nick) + '</span>' +
+            '<span class="prow-sc">' + pl.s + ' 分</span>' +
+            '<span class="prow-pw">' + (pl.p ? '🔑 ' + esc(pl.p) : '<span style="color:#ff6b6b;">未设密码</span>') + '</span>' +
+            (isAdminRow
+              ? '<span class="prow-ops" style="color:var(--muted);font-size:11px;">管理员不参与积分榜</span>'
+              : '<span class="prow-ops">' +
+                '<button class="pbtn" data-delta="-1" data-uid="' + pl.id + '">−1</button>' +
+                '<button class="pbtn" data-delta="1" data-uid="' + pl.id + '">+1</button>' +
+                '<input class="prow-in" type="number" placeholder="自定义" style="width:52px;padding:4px;border-radius:6px;border:1px solid var(--line);background:rgba(255,255,255,.05);color:var(--text);font-size:12px;">' +
+                '<button class="pbtn" data-custom="1" data-uid="' + pl.id + '">调</button></span>') +
+            '</div>';
+        }).join('');
+    }
+    box.innerHTML = pHtml;
+    return;
   } else {
     list = state.messages.slice().reverse().map(function (m) {
       return { id: m.id, who: m.from, time: m.time,
@@ -2083,6 +2155,18 @@ function renderLogs(tab) {
 
 /* --- 后台删除 --- */
 document.getElementById('adminLogs').addEventListener('click', function (e) {
+  /* 玩家管理：实时加减分 */
+  var pDelta = e.target.closest('[data-delta]');
+  if (pDelta) { adjustPlayerScore(pDelta.getAttribute('data-uid'), parseFloat(pDelta.dataset.delta)); return; }
+  var pCustom = e.target.closest('[data-custom]');
+  if (pCustom) {
+    var row = pCustom.closest('.prow');
+    var inp = row && row.querySelector('.prow-in');
+    var v = inp ? parseFloat(inp.value) : NaN;
+    if (isNaN(v) || v === 0) { toast('请输入非零数值'); return; }
+    adjustPlayerScore(pCustom.getAttribute('data-uid'), v);
+    return;
+  }
   var edit = e.target.closest('[data-edit]');
   if (edit) { openEditPerson(edit.getAttribute('data-edit')); return; }
   var del = e.target.closest('[data-del]');
