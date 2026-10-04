@@ -904,7 +904,7 @@
 var CONFIG = {
   title: '宁波*中最权威人物评级',   // 把 XXX 改成你的学校/班级/年级名
   sub: '权威评级 · 欢迎提名 · 纯属娱乐（严禁暴露隐私，仅供娱乐）',
-  ADMIN_HASH: '6de9e63ce511c',     // 后台密码的哈希指纹（明文密码已从代码移除，防止别人查看源代码直接看到密码）
+  ADMIN_HASH: '100a562ed3ba14',     // 后台密码的哈希指纹（明文密码已从代码移除，防止别人查看源代码直接看到密码）
   storageKey: 'rating_app_v1',     // 本地存储标识（版本更新时换数字）
   meKey: 'rating_me_v1',
   ratings: [                       // 五个评级档位，分数从高到低（第一个最高）
@@ -1530,7 +1530,7 @@ function renderAdjPanel() {
     var cur = sel.value;
     var opts = state.people.filter(function (p) { return p.status !== 'pending'; })
       .map(function (p) {
-        return '<option value="' + p.id + '">' + esc2(p.name) + '（当前 ' + personStats(p.id).total + ' 分）</option>';
+        return '<option value="' + p.id + '">' + esc(p.name) + '（当前 ' + personStats(p.id).total + ' 分）</option>';
       }).join('');
     sel.innerHTML = opts || '<option value="">（暂无人物）</option>';
     if (cur) sel.value = cur;
@@ -1541,7 +1541,7 @@ function renderAdjPanel() {
     box.innerHTML = arr.length
       ? '已调分 ' + arr.length + ' 次：<br>' + arr.slice(0, 10).map(function (a) {
           var p = state.people.find(function (x) { return x.id === a.personId; });
-          return (p ? esc2(p.name) : '?') + ' ' + (Number(a.delta) > 0 ? '+' : '') + a.delta + ' 分' + (a.reason ? '（' + esc2(a.reason) + '）' : '') + ' ' + (a.time || '');
+          return (p ? esc(p.name) : '?') + ' ' + (Number(a.delta) > 0 ? '+' : '') + a.delta + ' 分' + (a.reason ? '（' + esc(a.reason) + '）' : '') + ' ' + (a.time || '');
         }).join('<br>')
       : '暂无调分记录';
   }
@@ -1637,7 +1637,7 @@ function renderLogs(tab) {
   } else if (tab === 'games') {
     list = state.gameLogs.slice().reverse().map(function (g) {
       return { id: g.id, who: g.nick, time: g.time,
-        body: (g.win ? '🏆 赢了' : '😵 输了') + ' ' + esc2(g.player) + ' vs ' + esc2(g.enemy) + (g.comeback ? '（逆风翻盘！）' : '') };
+        body: (g.win ? '🏆 赢了' : '😵 输了') + ' ' + esc(g.player) + ' vs ' + esc(g.enemy) + (g.comeback ? '（逆风翻盘！）' : '') };
     });
   } else {
     list = state.messages.slice().reverse().map(function (m) {
