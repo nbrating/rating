@@ -1681,7 +1681,8 @@ function autoCleanup() {
   state.cleanupAt = now + 5 * 86400000;
   save();
 }
-function dailyTop() {                            // 每日榜前5（0 分不计，按分倒序）  var d = state.daily || {};
+function dailyTop() {                            // 每日榜前5（0 分不计，按分倒序）
+  var d = state.daily || {};
   var arr = Object.keys(d.scores || {}).map(function (id) { return { id: id, n: d.scores[id].n, s: d.scores[id].s || 0 }; })
     .filter(function (t) { return t.s > 0; })
     .sort(function (x, y) { return y.s - x.s; });
