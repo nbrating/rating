@@ -962,6 +962,11 @@ function cloudLoad() {
         var localHas = state.people && state.people.length > 0;
         if (remoteEmpty && localHas) {
           saveLocal(); scheduleCloudSave();            // 本地有、云端空 → 本地推上去
+        } else if (remoteEmpty) {
+          // 两边都空（全新设备）：用初始人物生成并推上去
+          state = load();
+          saveLocal(); scheduleCloudSave();
+          refresh();
         } else {
           state = normalizeState(remote);              // 云端为准
           saveLocal();
