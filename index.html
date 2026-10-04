@@ -980,6 +980,22 @@
     </div>
   </div>
 
+  <!-- ===== 身份找回弹窗（昵称被占用时输入密码找回原身份） ===== -->
+  <div class="mask" id="recoverMask">
+    <div class="modal">
+      <h3 id="recoverTitle">昵称已被使用</h3>
+      <div class="tip" id="recoverTip">输入对应的密码，验证后恢复你的身份</div>
+      <div class="field" style="margin-top:8px;">
+        <label id="recoverLabel">输入密码</label>
+        <input id="recoverInput" type="password" placeholder="密码只用于验证，不会公开">
+      </div>
+      <div class="row2">
+        <button class="btn ghost" data-close="recoverMask">换一个昵称</button>
+        <button class="btn ok" id="recoverOk">验证并找回</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ===== 修改密码弹窗 ===== -->
   <div class="mask" id="pwdEditMask">
     <div class="modal">
@@ -1740,8 +1756,25 @@ document.getElementById('pwdViewClose').addEventListener('click', function () { 
 document.getElementById('nickSubmit').addEventListener('click', function () {
   var v = document.getElementById('nickInput').value.trim();
   if (!v) { toast('昵称不能为空'); return; }
-  if (state.admin && state.admin.nick && v === state.admin.nick && !isAdmin()) {
-    toast('这个名字已被占用，换一个吧');
+  /* 身份找回：管理员名 → 输后台密码；已注册昵称 → 输该玩家私人密码 */
+  var adminMatch = !!(state.admin && state.admin.nick && v === state.admin.nick && !isAdmin());
+  var passMatch = null;
+  if (!adminMatch) {
+    var pp = state.playerPasses || {};
+    for (var k in pp) {
+      if (pp[k] && pp[k].n === v) { passMatch = k; break; }
+    }
+    if (passMatch === me.id) passMatch = null;   // 自己的昵称，不算占用
+  }
+  if (adminMatch || passMatch) {
+    pendingNick = v;
+    pendingRecover = adminMatch ? 'admin' : passMatch;
+    document.getElementById('recoverTitle').textContent = adminMatch ? '👑 管理员身份验证' : '昵称已被使用';
+    document.getElementById('recoverTip').textContent = adminMatch
+      ? '输入后台密码，验证你是管理员「' + v + '」，找回管理员身份'
+      : '该昵称已被注册，输入它的私人密码找回你的身份（防止别人顶替你）';
+    document.getElementById('recoverInput').value = '';
+    openMask('recoverMask');
     return;
   }
   me.nick = v.slice(0, 12);
@@ -1756,6 +1789,47 @@ document.getElementById('nickSubmit').addEventListener('click', function () {
   if (pending) {
     var act = pending;
     pending = null;
+    if (act.type === 'rate') openRate(act.pid);
+    else if (act.type === 'cmt') doSendCmt(act.pid, act.text);
+    else if (act.type === 'add') openAddModal();
+    else if (act.type === 'game' && window.__startGame) window.__startGame();
+    else if (act.type === 'msg' && window.__openMsg) window.__openMsg();
+  }
+});
+document.getElementById('recoverOk').addEventListener('click', function () {
+  var v = document.getElementById('recoverInput').value.trim();
+  if (!v) { toast('请输入密码'); return; }
+  if (pendingRecover === 'admin') {
+    if (cyrb53(v, 2026) !== currentAdminHash()) { toast('后台密码不对，无法找回'); return; }
+    me.id = state.admin.userId;
+    me.nick = state.admin.nick;
+    me.pwd = v;
+    localStorage.setItem('admin_pwd_last', String(Date.now()));
+    saveMe();
+    closeMask('recoverMask');
+    closeMask('nickMask');
+    refreshNickShow();
+    refreshPwdState();
+    toast('👑 欢迎回来，管理员「' + me.nick + '」');
+  } else {
+    var uid = pendingRecover;
+    var pp = state.playerPasses || {};
+    if (!pp[uid] || pp[uid].p !== v) { toast('私人密码不对，无法找回该昵称'); return; }
+    me.id = uid;
+    me.nick = pp[uid].n;
+    me.pwd = v;
+    saveMe();
+    closeMask('recoverMask');
+    closeMask('nickMask');
+    refreshNickShow();
+    refreshPwdState();
+    toast('欢迎回来，「' + me.nick + '」！你的记录已找回');
+  }
+  pendingNick = null;
+  pendingRecover = null;
+  var act = pending;
+  pending = null;
+  if (act) {
     if (act.type === 'rate') openRate(act.pid);
     else if (act.type === 'cmt') doSendCmt(act.pid, act.text);
     else if (act.type === 'add') openAddModal();
