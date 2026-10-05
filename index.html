@@ -3155,7 +3155,7 @@ window.__openMsg = openMsgModal;
 
   function startRace() {
     document.getElementById('gameTitle').textContent = '🏁 运动会跑步比拼';
-    G.turn = 0; G.waitRps = false; G.over = false; G.lastLead = 'tie';
+    G.turn = 0; G.waitRps = false; G.over = false; G.lastLead = 'tie'; G.actAt = 0;
     var b = document.getElementById('gameBody');
     b.innerHTML =
       '<div class="race-tip" id="raceTip">🥇 谁先冲过终点谁赢！点按钮加速奔跑</div>' +
@@ -3311,8 +3311,10 @@ window.__openMsg = openMsgModal;
     btn.addEventListener('click', function () { rpsPick(btn.dataset.h); });
   });
   function playerAct(a) {
-    var p = G.player, e = G.enemy;
     if (G.waitRps) { toast('先猜拳定气势！✊✌️🖐'); return; }
+    if (G.actAt && Date.now() - G.actAt < 850) return;   // 冷却锁：防手速连点作弊（每轮只能操作一次）
+    G.actAt = Date.now();
+    var p = G.player, e = G.enemy;
     var base = p.speed;
     if (a === 'spr') {
       if (p.stm >= 18) {
