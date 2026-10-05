@@ -1229,7 +1229,14 @@ function load() {
   });
   return d;
 }
-function save() { saveLocal(); scheduleCloudSave(); }
+function save() {
+  /* 记录本玩家最后活跃时间（用于PK"在线玩家"名单判断） */
+  if (me && me.id && state.playerPasses) {
+    var pp0 = state.playerPasses[me.id] || {};
+    state.playerPasses[me.id] = { n: me.nick || pp0.n, p: pp0.p || (me.pwd || ''), t: now() };
+  }
+  saveLocal(); scheduleCloudSave();
+}
 function saveLocal() { localStorage.setItem(CONFIG.storageKey, JSON.stringify(state)); }
 
 /* ============ 云端共享（GitHub 仓库 data.json）============ */
@@ -3602,27 +3609,94 @@ window.__openMsg = openMsgModal;
   }
 
   /* ============ 玩家间 PK（轮询 + 云端状态，同角色比用时，赢家掠夺积分） ============ */
-  var PK = { mode: '', room: null, endAt: 0, timer: null, matchSince: 0, done: false };
+  var PK = { mode: '', room: null, endAt: 0, timer: null, matchSince: 0, done: false, target: null };
   window.openPk = function () {
     if (PK.mode && PK.mode !== 'result') { toast('PK 进行中…'); return; }
     if (!me || !me.id) { toast('请先设置昵称'); return; }
     openMask('pkMask');
     document.getElementById('pkTitle').textContent = '⚔️ 玩家PK对战';
-    showPkBody('<div style="font-size:15px;color:var(--muted);margin:8px 0;">正在寻找在线玩家…</div>');
     document.getElementById('pkOk').style.display = 'none';
+    showPkBody(
+      '<div style="font-size:13px;color:var(--muted);margin:4px 0 10px;">在线玩家同角色赛跑，赢家掠夺对方 1~3 分！</div>' +
+      '<button class="btn ok" id="pkRand" style="width:100%;margin:8px 0;">🎲 随机匹配</button>' +
+      '<button class="btn ghost" id="pkPick" style="width:100%;margin:8px 0;">🎯 指定玩家PK</button>');
+    document.getElementById('pkRand').addEventListener('click', function () { pkStart(false); });
+    document.getElementById('pkPick').addEventListener('click', function () { pkStart(true); });
+  };
+  function pkStart(pick) {
+    var okBtn = document.getElementById('pkOk'); okBtn.style.display = 'none';
     pkRead().then(function (pk) {
       pk = pk || {};
-      if (pk.result && (pk.result.winner === me.id || pk.result.loser === me.id)) { showPkResult(pk.result); return; }
-      if (pk.room && (pk.room.p1 === me.id || pk.room.p2 === me.id)) {
-        PK.mode = 'room';
-        showPkBody('<div style="font-size:16px;font-weight:800;color:var(--accent);margin:10px 0;">对局进行中…</div><div style="font-size:13px;color:var(--muted);">等待对手完成比赛，请稍候。</div>');
-        pkPoll();
+      /* 占位锁定：有人在对战中，第三者提示稍等 */
+      if (pk.room && pk.room.p1 && pk.room.p2) {
+        if (pk.room.p1 === me.id || pk.room.p2 === me.id) {
+          PK.mode = 'room';
+          showPkBody('<div style="font-size:16px;font-weight:800;color:var(--accent);margin:10px 0;">对局进行中…</div><div style="font-size:13px;color:var(--muted);">等待对手完成比赛，请稍候。</div>');
+          pkPoll();
+          return;
+        }
+        showPkBody('<div style="font-size:15px;font-weight:800;color:#ffd94d;margin:10px 0;">⚔️ 有玩家正在对战中</div>' +
+          '<div style="font-size:13px;color:var(--muted);">稍等片刻，他们打完后即可匹配~</div>');
         return;
       }
-      if (pk.waiting && pk.waiting.uid && pk.waiting.uid !== me.id) { pkJoin(pk.waiting); return; }
-      pkWait();
+      if (pk.result && (pk.result.winner === me.id || pk.result.loser === me.id)) { showPkResult(pk.result); return; }
+      /* 被挑战 → 接受 */
+      if (pk.waiting && pk.waiting.target === me.id && pk.waiting.uid !== me.id) {
+        showPkBody('<div style="font-size:16px;font-weight:900;color:#ffd94d;margin:10px 0;">🎯 ' + esc2(pk.waiting.nick || '玩家') + ' 挑战你！</div>' +
+          '<div style="font-size:13px;color:var(--muted);margin-bottom:10px;">接受后立即开战，同角色赛跑比用时！</div>');
+        okBtn.style.display = '';
+        okBtn.textContent = '接受挑战 ⚔️';
+        okBtn.onclick = function () { pkJoin(pk.waiting); };
+        return;
+      }
+      /* 随机匹配：有等待者 → 确认接受 */
+      if (!pick && pk.waiting && pk.waiting.uid && pk.waiting.uid !== me.id && !pk.waiting.target) {
+        showPkBody('<div style="font-size:16px;font-weight:900;color:#ffd94d;margin:10px 0;">⚔️ 匹配到在线玩家！</div>' +
+          '<div style="font-size:13px;color:var(--muted);margin-bottom:10px;">与 ' + esc2(pk.waiting.nick || '玩家') + ' 对战，同角色赛跑比用时！</div>');
+        okBtn.style.display = '';
+        okBtn.textContent = '接受对战 ⚔️';
+        okBtn.onclick = function () { pkJoin(pk.waiting); };
+        return;
+      }
+      if (pick) { pkPickList(); } else { pkWait(); }
     });
-  };
+  }
+  function pkPickList() {
+    var pp = state.playerPasses || {};
+    var ds = (state.daily || {}).scores || {};
+    var pool = {};
+    Object.keys(pp).forEach(function (id) { if (pp[id] && pp[id].n) pool[id] = pp[id].n; });
+    Object.keys(ds).forEach(function (id) { if (ds[id] && ds[id].n && !pool[id]) pool[id] = ds[id].n; });
+    var ids = Object.keys(pool).filter(function (id) { return id !== me.id; });
+    if (!ids.length) {
+      showPkBody('<div style="font-size:15px;color:var(--muted);margin:10px 0;">暂无其他玩家，快去喊人来玩吧~</div>');
+      return;
+    }
+    var html = '<div style="font-size:13px;color:var(--muted);margin:4px 0 8px;">选择要挑战的玩家（🟢=最近5分钟活跃）：</div>' +
+      '<div style="max-height:230px;overflow-y:auto;">';
+    ids.forEach(function (id) {
+      var nick = esc2(pool[id]);
+      var fresh = pp[id] && pp[id].t && Date.now() - pp[id].t < 5 * 60 * 1000;
+      html += '<button class="pk-user" data-id="' + id + '" style="display:block;width:100%;text-align:left;margin:4px 0;padding:10px 12px;border-radius:10px;background:rgba(255,255,255,.07);border:1px solid var(--line);color:var(--text);cursor:pointer;">' +
+        (fresh ? '🟢 ' : '⚪ ') + nick + '</button>';
+    });
+    html += '</div>';
+    showPkBody(html);
+    var nodes = document.querySelectorAll('.pk-user');
+    for (var i = 0; i < nodes.length; i++) {
+      (function (n) {
+        n.addEventListener('click', function () { pkChallenge(n.getAttribute('data-id')); });
+      })(nodes[i]);
+    }
+  }
+  function pkChallenge(target) {
+    PK.mode = 'wait'; PK.matchSince = Date.now(); PK.done = false; PK.target = target;
+    pkWrite(function (p) { p.waiting = { uid: me.id, nick: me.nick || '匿名', t: Date.now(), target: target }; });
+    showPkBody('<div style="font-size:15px;font-weight:800;color:#ffd94d;margin:10px 0;">🎯 挑战已发出！</div>' +
+      '<div style="font-size:13px;color:var(--muted);">等待对方接受（60秒内），对方打开PK即可看到挑战。<br>也可以去私信催一下~</div>');
+    document.getElementById('pkOk').style.display = 'none';
+    pkPoll();
+  }
   function pkRead() {
     return fetch('https://nbrating.github.io/rating/data_pk.json', { cache: 'no-store' }).then(function (r) { return r.json(); })
       .then(function (d) { return d || {}; }).catch(function () { return {}; });
@@ -3700,13 +3774,13 @@ window.__openMsg = openMsgModal;
           document.getElementById('pkOk').style.display = 'none';
           return;
         }
-        /* 挂起中发现新的对手等待者 → 主动加入（两人同时挂起也能匹配） */
-        if (PK.mode === 'wait' && !pk.room && pk.waiting && pk.waiting.uid && pk.waiting.uid !== me.id) {
+        /* 挂起中发现新的随机匹配等待者 → 主动加入（两人同时挂起也能匹配；指定挑战不打断） */
+        if (PK.mode === 'wait' && !pk.room && pk.waiting && pk.waiting.uid && pk.waiting.uid !== me.id && !pk.waiting.target) {
           clearInterval(PK.timer);
           pkJoin(pk.waiting);
           return;
         }
-        /* 等待者：对手加入 → 开战 */
+        /* 指定挑战被接受 → 开战 */
         if (PK.mode === 'wait' && pk.room && (pk.room.p1 === me.id || pk.room.p2 === me.id)) {
           clearInterval(PK.timer);
           startPkGame(pk.room);
