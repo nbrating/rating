@@ -3778,14 +3778,8 @@ window.__openMsg = openMsgModal;
     pkWrite(function (p) { p.waiting = null; p.rooms = p.rooms || []; p.rooms.push(room); });
     showPkBody('<div style="font-size:17px;font-weight:900;color:#ffd94d;margin:10px 0;">⚔️ 匹配成功！对手在线！</div>' +
       '<div style="font-size:13px;color:var(--muted);">双方使用同一个角色「' + role.name + '」对战，2 秒后开始！</div>');
-    /* 2.5 秒后确认房间是否真的写入成功：失败则重新挂起，避免双方死等 */
-    setTimeout(function () {
-      pkRead().then(function (p) {
-        var my = pkMyRoom(p.rooms);
-        if (my) startPkGame(my);
-        else { PK.mode = ''; toast('匹配写入失败，正在重新匹配…'); pkWait(); }
-      });
-    }, 2500);
+    /* 2.5 秒后直接开战（房间写入已由 pkWrite 重试 3 次保障；不再读缓存验证，避免 CDN 延迟误报"写入失败"） */
+    setTimeout(function () { startPkGame(room); }, 2500);
   }
   function startPkGame(room) {
     closeMask('pkMask');
