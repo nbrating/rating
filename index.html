@@ -1484,9 +1484,11 @@ function doCloudSave() {
   CLOUD.queue = false;
   trimState();   // 上传前自动清理，防止文件越滚越大
   var doPut = function () {
+    var up = JSON.parse(JSON.stringify(state));
+    delete up.pk;   // PK 状态独立存 data_pk.json，普通保存不覆盖进行中的 PK
     var body = JSON.stringify({
       message: 'sync ' + now(),
-      content: b64Encode(JSON.stringify(state)),
+      content: b64Encode(JSON.stringify(up)),
       sha: CLOUD.sha
     });
     fetch(CLOUD.api, { method: 'PUT', headers: cloudHeaders(), body: body })
@@ -1495,7 +1497,7 @@ function doCloudSave() {
         if (d.content) {
           CLOUD.sha = d.content.sha;
           CLOUD.tryCount = 0;
-          CLOUD.cache = { t: Date.now(), data: JSON.parse(JSON.stringify(state)) };   // 保存成功 → 刷新缓存（防止旧缓存覆盖新数据）
+          CLOUD.cache = { t: Date.now(), data: JSON.parse(JSON.stringify(up)) };   // 保存成功 → 刷新缓存（防止旧缓存覆盖新数据）
           return;
         }
         var msg = d.message || '';
@@ -3622,16 +3624,22 @@ window.__openMsg = openMsgModal;
     });
   };
   function pkRead() {
-    return fetch(CLOUD.apiPages, { cache: 'no-store' }).then(function (r) { return r.json(); })
-      .then(function (d) { return (d && d.pk) || {}; }).catch(function () { return {}; });
+    return fetch('https://nbrating.github.io/rating/data_pk.json', { cache: 'no-store' }).then(function (r) { return r.json(); })
+      .then(function (d) { return d || {}; }).catch(function () { return {}; });
   }
   function pkWrite(fn) {
     pkRead().then(function (pk) {
       var nk = { waiting: null, room: null, result: null, finish: null };
       if (pk) { nk.waiting = pk.waiting || null; nk.room = pk.room || null; nk.result = pk.result || null; nk.finish = pk.finish || null; }
       fn(nk);
-      state.pk = nk;
-      save();
+      var payload = { message: 'pk ' + now(), content: b64Encode(JSON.stringify(nk)) };
+      var apiPk = 'https://api.github.com/repos/nbrating/rating/contents/data_pk.json';
+      fetch(apiPk, { headers: cloudHeaders() })
+        .then(function (r) { return r.json(); })
+        .then(function (j) {
+          if (j && j.sha) payload.sha = j.sha;
+          return fetch(apiPk, { method: 'PUT', headers: cloudHeaders(), body: JSON.stringify(payload) });
+        }).catch(function () {});
     });
   }
   function pkWait() {
