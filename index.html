@@ -1377,12 +1377,26 @@ function scheduleCloudSave() {
   if (CLOUD.timer) clearTimeout(CLOUD.timer);
   CLOUD.timer = setTimeout(doCloudSave, 800);
 }
-/* 自动清理：评论最新 50 条、评级 300 条、私信 100 条、游戏战绩 50 条、调分记录 50 条、寿来~记录 100 条、活跃分 300 人（只删最旧的） */
+/* 自动清理：评论最新 50 条、私信 100 条、游戏战绩 50 条、调分记录 50 条、寿来~记录 100 条、活跃分 300 人（只删最旧的）；评级记录超限时先固化分数再删，绝不影响人物分 */
 function trimState() {
-  var LIM = { comments: 50, ratings: 300, messages: 100, gameLogs: 50, adjustments: 50, hits: 100 };
+  var LIM = { comments: 50, messages: 100, gameLogs: 50, adjustments: 50, hits: 100 };
   Object.keys(LIM).forEach(function (k) {
     if ((state[k] || []).length > LIM[k]) state[k] = state[k].slice(-LIM[k]);
   });
+  // 评级记录超 1000 条：先把超出的票固化进人物基础分（分数/档位分布保留），再删最旧记录
+  if ((state.ratings || []).length > 1000) {
+    var over = state.ratings.length - 1000;
+    state.ratings.slice(0, over).forEach(function (r) {
+      var p = state.people && state.people.find(function (x) { return x.id === r.personId; });
+      if (!p) return;
+      var rt = CONFIG.ratings.find(function (x) { return x.label === r.level; });
+      p.base = (p.base || 0) + (rt ? rt.score : 0);
+      p.rateCount = (p.rateCount || 0) + 1;
+      p.dist = p.dist || {};
+      p.dist[r.level] = (p.dist[r.level] || 0) + 1;
+    });
+    state.ratings = state.ratings.slice(-1000);
+  }
   // 活跃分：每用户一条，超过 300 人时保留最新 300 条（防止文件膨胀）
   if (state.activity && state.activity.scores) {
     var ks = Object.keys(state.activity.scores);
@@ -2738,6 +2752,7 @@ document.getElementById('adminLogs').addEventListener('click', function (e) {
     state.comments = state.comments.filter(function (c) { return c.personId !== id; });
   }
   save();
+  doCloudSave();            // 立即同步云端（不等防抖，防止刷新后被云端旧数据带回来）
   renderLogs(tab);
   document.getElementById('stPeople').textContent = state.people.length;
   document.getElementById('stRates').textContent = state.ratings.length;
