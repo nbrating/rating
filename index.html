@@ -2551,7 +2551,13 @@ function renderLogs(tab) {
     var pmap = {};
     /* 昵称索引：从投票/评论/寿来~ 记录收集每个玩家的真实昵称（优先非匿名） */
     var nickIndex = {};
-    state.ratings.concat(state.comments).concat(state.hits || []).forEach(function (r) {
+    var nickSrc = (state.ratings || []).concat(state.comments || []).concat(state.hits || []);
+    if (state.activity && state.activity.scores) {
+      Object.keys(state.activity.scores).forEach(function (aid) {
+        if (state.activity.scores[aid] && state.activity.scores[aid].n) nickSrc.push({ userId: aid, nick: state.activity.scores[aid].n });
+      });
+    }
+    nickSrc.forEach(function (r) {
       if (r && r.userId && r.nick && r.nick !== '匿名' && !nickIndex[r.userId]) nickIndex[r.userId] = r.nick;
     });
     var nickOf = function (uid) {                  // 真实昵称：密码表 → 活跃榜 → 操作记录 → ''
