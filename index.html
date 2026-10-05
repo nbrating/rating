@@ -3631,9 +3631,14 @@ window.__openMsg = openMsgModal;
       /* 占位锁定：有人在对战中，第三者提示稍等 */
       if (pk.room && pk.room.p1 && pk.room.p2) {
         if (pk.room.p1 === me.id || pk.room.p2 === me.id) {
-          PK.mode = 'room';
-          showPkBody('<div style="font-size:16px;font-weight:800;color:var(--accent);margin:10px 0;">对局进行中…</div><div style="font-size:13px;color:var(--muted);">等待对手完成比赛，请稍候。</div>');
-          pkPoll();
+          /* 本人在房间内：若自己已完成则等待对手，否则立即开战 */
+          if (pk.finish && pk.finish[me.id]) {
+            PK.mode = 'room';
+            showPkBody('<div style="font-size:16px;font-weight:800;color:var(--accent);margin:10px 0;">对局进行中…</div><div style="font-size:13px;color:var(--muted);">等待对手完成比赛，请稍候。</div>');
+            pkPoll();
+          } else {
+            startPkGame(pk.room);
+          }
           return;
         }
         showPkBody('<div style="font-size:15px;font-weight:800;color:#ffd94d;margin:10px 0;">⚔️ 有玩家正在对战中</div>' +
@@ -3666,8 +3671,8 @@ window.__openMsg = openMsgModal;
     var pp = state.playerPasses || {};
     var ds = (state.daily || {}).scores || {};
     var pool = {};
-    Object.keys(pp).forEach(function (id) { if (pp[id] && pp[id].n) pool[id] = pp[id].n; });
-    Object.keys(ds).forEach(function (id) { if (ds[id] && ds[id].n && !pool[id]) pool[id] = ds[id].n; });
+    Object.keys(pp).forEach(function (id) { if (pp[id] && pp[id].n && pp[id].n !== '匿名') pool[id] = pp[id].n; });
+    Object.keys(ds).forEach(function (id) { if (ds[id] && ds[id].n && ds[id].n !== '匿名' && !pool[id]) pool[id] = ds[id].n; });
     var ids = Object.keys(pool).filter(function (id) { return id !== me.id; });
     if (!ids.length) {
       showPkBody('<div style="font-size:15px;color:var(--muted);margin:10px 0;">暂无其他玩家，快去喊人来玩吧~</div>');
@@ -3694,7 +3699,7 @@ window.__openMsg = openMsgModal;
     PK.mode = 'wait'; PK.matchSince = Date.now(); PK.done = false; PK.target = target;
     pkWrite(function (p) { p.waiting = { uid: me.id, nick: me.nick || '匿名', t: Date.now(), target: target }; });
     showPkBody('<div style="font-size:15px;font-weight:800;color:#ffd94d;margin:10px 0;">🎯 挑战已发出！</div>' +
-      '<div style="font-size:13px;color:var(--muted);">等待对方接受（60秒内），对方打开PK即可看到挑战。<br>也可以去私信催一下~</div>');
+      '<div style="font-size:13px;color:var(--muted);">等待对方接受（120秒内），对方打开PK即可看到挑战。<br>也可以去私信催一下~</div>');
     document.getElementById('pkOk').style.display = 'none';
     pkPoll();
   }
@@ -3735,7 +3740,7 @@ window.__openMsg = openMsgModal;
     PK.mode = 'wait'; PK.matchSince = Date.now(); PK.done = false;
     pkWrite(function (p) { p.waiting = { uid: me.id, nick: me.nick || '匿名', t: Date.now() }; });
     showPkBody('<div style="font-size:18px;font-weight:900;color:#ff5f6d;margin:10px 0;">📡 无人在线…</div>' +
-      '<div style="font-size:13px;color:var(--muted);line-height:1.7;">已为你挂起匹配，<b style="color:#ffd94d;">60 秒</b>内有对手加入就开战。<br>快喊小伙伴也点一下「⚔️ 玩家PK」！</div>');
+      '<div style="font-size:13px;color:var(--muted);line-height:1.7;">已为你挂起匹配，<b style="color:#ffd94d;">120 秒</b>内有对手加入就开战。<br>快喊小伙伴也点一下「⚔️ 玩家PK」！</div>');
     pkPoll();
   }
   function pkJoin(w) {
@@ -3770,11 +3775,11 @@ window.__openMsg = openMsgModal;
       pkRead().then(function (pk) {
         pk = pk || {};
         if (!PK.mode) { clearInterval(PK.timer); return; }
-        /* 等待超时 60 秒 */
-        if (PK.mode === 'wait' && !pk.room && pk.waiting && pk.waiting.uid === me.id && Date.now() - PK.matchSince > 60000) {
+        /* 等待超时 120 秒 */
+        if (PK.mode === 'wait' && !pk.room && pk.waiting && pk.waiting.uid === me.id && Date.now() - PK.matchSince > 120000) {
           clearInterval(PK.timer); PK.mode = '';
           pkWrite(function (p) { if (p.waiting && p.waiting.uid === me.id) p.waiting = null; });
-          showPkBody('<div style="font-size:16px;font-weight:800;color:var(--muted);margin:10px 0;">⏰ 60秒内无人加入</div><div style="font-size:13px;color:var(--muted);">下次再喊上小伙伴一起吧~</div>');
+          showPkBody('<div style="font-size:16px;font-weight:800;color:var(--muted);margin:10px 0;">⏰ 120秒内无人加入</div><div style="font-size:13px;color:var(--muted);">下次再喊上小伙伴一起吧~</div>');
           document.getElementById('pkOk').style.display = 'none';
           return;
         }
@@ -3790,8 +3795,16 @@ window.__openMsg = openMsgModal;
           startPkGame(pk.room);
           return;
         }
+        /* 房间内：本人在房间但还没跑 → 立即开战（刷新/中途退出后恢复） */
+        if ((PK.mode === 'game' || PK.mode === 'room') && pk.room && (pk.room.p1 === me.id || pk.room.p2 === me.id)) {
+          if (!pk.finish || !pk.finish[me.id]) {
+            clearInterval(PK.timer);
+            startPkGame(pk.room);
+            return;
+          }
+        }
         /* 房间内：双方都完成 → 判胜 */
-        if (PK.mode === 'game' && pk.finish && pk.finish[me.id] && pk.room) {
+        if ((PK.mode === 'game' || PK.mode === 'room') && pk.finish && pk.finish[me.id] && pk.room) {
           var other = pk.room.p1 === me.id ? pk.room.p2 : pk.room.p1;
           if (other && pk.finish[other]) {
             clearInterval(PK.timer);
