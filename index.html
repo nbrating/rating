@@ -3540,7 +3540,11 @@ window.__openMsg = openMsgModal;
     /* PK 模式：不上报普通战绩/活跃值，上传完成时间等对手，比用时定胜负 */
     if (PK.mode === 'game') {
       PK.endAt = Date.now();
-      pkWrite(function (p) { p.finish = p.finish || {}; p.finish[me.id] = PK.endAt; });
+      var rid = PK.room ? PK.room.id : null;
+      pkWrite(function (p) {
+        var r = (p.rooms || []).filter(function (rr) { return rr.id === rid; })[0];
+        if (r) { r.finish = r.finish || {}; r.finish[me.id] = PK.endAt; }
+      });
       PK.done = true;
       G.busy = false;
       document.getElementById('gameTitle').textContent = '⏳ PK完成，等待对手…';
@@ -3628,21 +3632,17 @@ window.__openMsg = openMsgModal;
     var okBtn = document.getElementById('pkOk'); okBtn.style.display = 'none';
     pkRead().then(function (pk) {
       pk = pk || {};
-      /* 占位锁定：有人在对战中，第三者提示稍等 */
-      if (pk.room && pk.room.p1 && pk.room.p2) {
-        if (pk.room.p1 === me.id || pk.room.p2 === me.id) {
-          /* 本人在房间内：若自己已完成则等待对手，否则立即开战 */
-          if (pk.finish && pk.finish[me.id]) {
-            PK.mode = 'room';
-            showPkBody('<div style="font-size:16px;font-weight:800;color:var(--accent);margin:10px 0;">对局进行中…</div><div style="font-size:13px;color:var(--muted);">等待对手完成比赛，请稍候。</div>');
-            pkPoll();
-          } else {
-            startPkGame(pk.room);
-          }
+      /* 我的对局（rooms 里找自己）：已完成则等待/判胜，未完成立即开战 */
+      var my = pkMyRoom(pk.rooms);
+      if (my) {
+        if (my.result) { showPkResult(my.result); return; }
+        if (my.finish && my.finish[me.id]) {
+          PK.mode = 'room';
+          showPkBody('<div style="font-size:16px;font-weight:800;color:var(--accent);margin:10px 0;">对局进行中…</div><div style="font-size:13px;color:var(--muted);">等待对手完成比赛，请稍候。</div>');
+          pkPoll();
           return;
         }
-        showPkBody('<div style="font-size:15px;font-weight:800;color:#ffd94d;margin:10px 0;">⚔️ 有玩家正在对战中</div>' +
-          '<div style="font-size:13px;color:var(--muted);">稍等片刻，他们打完后即可匹配~</div>');
+        startPkGame(my);
         return;
       }
       if (pk.result && (pk.result.winner === me.id || pk.result.loser === me.id)) { showPkResult(pk.result); return; }
@@ -3655,7 +3655,7 @@ window.__openMsg = openMsgModal;
         okBtn.onclick = function () { pkJoin(pk.waiting); };
         return;
       }
-      /* 随机匹配：有等待者 → 确认接受 */
+      /* 随机匹配：有等待者 → 确认接受（不受其他对局影响，多人可同时打） */
       if (!pick && pk.waiting && pk.waiting.uid && pk.waiting.uid !== me.id && !pk.waiting.target) {
         showPkBody('<div style="font-size:16px;font-weight:900;color:#ffd94d;margin:10px 0;">⚔️ 匹配到在线玩家！</div>' +
           '<div style="font-size:13px;color:var(--muted);margin-bottom:10px;">与 ' + esc2(pk.waiting.nick || '玩家') + ' 对战，同角色赛跑比用时！</div>');
@@ -3705,12 +3705,18 @@ window.__openMsg = openMsgModal;
   }
   function pkRead() {
     return fetch('https://nbrating.github.io/rating/data_pk.json', { cache: 'no-store' }).then(function (r) { return r.json(); })
-      .then(function (d) { return d || {}; }).catch(function () { return {}; });
+      .then(function (d) {
+        d = d || {};
+        /* 兼容旧结构（room/finish 单房间）→ 新结构 rooms 数组（多人同时多局） */
+        if (!d.rooms && d.room) { d.rooms = [d.room]; delete d.room; }
+        if (!d.rooms) d.rooms = [];
+        return d;
+      }).catch(function () { return { waiting: null, rooms: [], result: null }; });
   }
   function pkWrite(fn) {
     pkRead().then(function (pk) {
-      var nk = { waiting: null, room: null, result: null, finish: null };
-      if (pk) { nk.waiting = pk.waiting || null; nk.room = pk.room || null; nk.result = pk.result || null; nk.finish = pk.finish || null; }
+      var nk = { waiting: null, rooms: [], result: null };
+      if (pk) { nk.waiting = pk.waiting || null; nk.rooms = pk.rooms || []; nk.result = pk.result || null; }
       fn(nk);
       var apiPk = 'https://api.github.com/repos/nbrating/rating/contents/data_pk.json';
       var putPk = function (sha) {
@@ -3736,6 +3742,13 @@ window.__openMsg = openMsgModal;
         }).catch(function () { putPk(null); });
     });
   }
+  function pkMyRoom(rooms) {
+    if (!rooms) return null;
+    for (var i = 0; i < rooms.length; i++) {
+      if (rooms[i].p1 === me.id || rooms[i].p2 === me.id) return rooms[i];
+    }
+    return null;
+  }
   function pkWait() {
     PK.mode = 'wait'; PK.matchSince = Date.now(); PK.done = false;
     pkWrite(function (p) { p.waiting = { uid: me.id, nick: me.nick || '匿名', t: Date.now() }; });
@@ -3749,8 +3762,8 @@ window.__openMsg = openMsgModal;
     var role = pool[Math.floor(Math.random() * pool.length)];
     var eRole = pool[Math.floor(Math.random() * pool.length)];
     if (!role || !eRole) { toast('人物不够，无法PK'); closeMask('pkMask'); PK.mode = ''; return; }
-    var room = { id: 'pk' + Date.now(), p1: w.uid, p2: me.id, roleId: role.id, eRoleId: eRole.id, startAt: Date.now() };
-    pkWrite(function (p) { p.waiting = null; p.room = room; });
+    var room = { id: 'pk' + Date.now(), p1: w.uid, p2: me.id, roleId: role.id, eRoleId: eRole.id, startAt: Date.now(), finish: null, result: null };
+    pkWrite(function (p) { p.waiting = null; p.rooms = p.rooms || []; p.rooms.push(room); });
     showPkBody('<div style="font-size:17px;font-weight:900;color:#ffd94d;margin:10px 0;">⚔️ 匹配成功！对手在线！</div>' +
       '<div style="font-size:13px;color:var(--muted);">双方使用同一个角色「' + role.name + '」对战，2 秒后开始！</div>');
     setTimeout(function () { startPkGame(room); }, 2000);
@@ -3775,49 +3788,67 @@ window.__openMsg = openMsgModal;
       pkRead().then(function (pk) {
         pk = pk || {};
         if (!PK.mode) { clearInterval(PK.timer); return; }
-        /* 等待超时 120 秒 */
-        if (PK.mode === 'wait' && !pk.room && pk.waiting && pk.waiting.uid === me.id && Date.now() - PK.matchSince > 120000) {
+        var my = pkMyRoom(pk.rooms);
+        /* 挂起：等待超时 120 秒 */
+        if (PK.mode === 'wait' && !my && pk.waiting && pk.waiting.uid === me.id && Date.now() - PK.matchSince > 120000) {
           clearInterval(PK.timer); PK.mode = '';
           pkWrite(function (p) { if (p.waiting && p.waiting.uid === me.id) p.waiting = null; });
           showPkBody('<div style="font-size:16px;font-weight:800;color:var(--muted);margin:10px 0;">⏰ 120秒内无人加入</div><div style="font-size:13px;color:var(--muted);">下次再喊上小伙伴一起吧~</div>');
           document.getElementById('pkOk').style.display = 'none';
           return;
         }
-        /* 挂起中发现新的随机匹配等待者 → 主动加入（两人同时挂起也能匹配；指定挑战不打断） */
-        if (PK.mode === 'wait' && !pk.room && pk.waiting && pk.waiting.uid && pk.waiting.uid !== me.id && !pk.waiting.target) {
+        /* 挂起中发现新的随机匹配等待者 → 主动加入（多人可同时多局；指定挑战不打断） */
+        if (PK.mode === 'wait' && !my && pk.waiting && pk.waiting.uid && pk.waiting.uid !== me.id && !pk.waiting.target) {
           clearInterval(PK.timer);
           pkJoin(pk.waiting);
           return;
         }
-        /* 指定挑战被接受 → 开战 */
-        if (PK.mode === 'wait' && pk.room && (pk.room.p1 === me.id || pk.room.p2 === me.id)) {
-          clearInterval(PK.timer);
-          startPkGame(pk.room);
-          return;
-        }
-        /* 房间内：本人在房间但还没跑 → 立即开战（刷新/中途退出后恢复） */
-        if ((PK.mode === 'game' || PK.mode === 'room') && pk.room && (pk.room.p1 === me.id || pk.room.p2 === me.id)) {
-          if (!pk.finish || !pk.finish[me.id]) {
+        /* 挂起中 waiting 被清（被新等待者覆盖）→ 重新挂起排队 */
+        if (PK.mode === 'wait' && !my && (!pk.waiting || pk.waiting.uid !== me.id || pk.waiting.target === me.id)) {
+          if (pk.waiting && pk.waiting.target === me.id && pk.waiting.uid !== me.id) {
+            /* 被挑战：弹窗提示接受 */
             clearInterval(PK.timer);
-            startPkGame(pk.room);
+            var okBtn = document.getElementById('pkOk');
+            showPkBody('<div style="font-size:16px;font-weight:900;color:#ffd94d;margin:10px 0;">🎯 ' + esc2(pk.waiting.nick || '玩家') + ' 挑战你！</div>' +
+              '<div style="font-size:13px;color:var(--muted);margin-bottom:10px;">接受后立即开战！</div>');
+            okBtn.style.display = '';
+            okBtn.textContent = '接受挑战 ⚔️';
+            okBtn.onclick = function () { pkJoin(pk.waiting); };
             return;
           }
+          pkWrite(function (p) { if (!p.waiting) p.waiting = { uid: me.id, nick: me.nick || '匿名', t: Date.now() }; });
+          return;
         }
-        /* 房间内：双方都完成 → 判胜 */
-        if ((PK.mode === 'game' || PK.mode === 'room') && pk.finish && pk.finish[me.id] && pk.room) {
-          var other = pk.room.p1 === me.id ? pk.room.p2 : pk.room.p1;
-          if (other && pk.finish[other]) {
+        /* 我的对局已出结果 → 弹窗 */
+        if (my && my.result) {
+          clearInterval(PK.timer);
+          showPkResult(my.result);
+          return;
+        }
+        /* 我的对局：本人在房间但还没跑 → 立即开战（刷新/中途退出后恢复） */
+        if (my && (!my.finish || !my.finish[me.id])) {
+          clearInterval(PK.timer);
+          startPkGame(my);
+          return;
+        }
+        /* 我的对局：双方都完成 → 判胜 */
+        if (my && my.finish && my.finish[me.id]) {
+          var other = my.p1 === me.id ? my.p2 : my.p1;
+          if (other && my.finish[other]) {
             clearInterval(PK.timer);
-            var w = pk.finish[me.id] <= pk.finish[other] ? me.id : other;
+            var w = my.finish[me.id] <= my.finish[other] ? me.id : other;
             var l = w === me.id ? other : me.id;
-            pkWrite(function (p) { p.finish = null; p.result = { winner: w, loser: l, loot: 0, state: 'loot', t: Date.now() }; });
+            pkWrite(function (p) {
+              var r = (p.rooms || []).filter(function (rr) { return rr.id === my.id; })[0];
+              if (r) { r.finish = null; r.result = { winner: w, loser: l, loot: 0, state: 'loot', t: Date.now() }; }
+            });
             setTimeout(function () {
               pkRead().then(function (p2) { if (p2 && p2.result) showPkResult(p2.result); });
             }, 2000);
             return;
           }
         }
-        /* 结果已出 */
+        /* 全局结果已出（兼容） */
         if (pk.result && (pk.result.winner === me.id || pk.result.loser === me.id)) {
           clearInterval(PK.timer);
           showPkResult(pk.result);
@@ -3880,7 +3911,11 @@ window.__openMsg = openMsgModal;
     save();
   }
   function clearPk() {
-    pkWrite(function (p) { p.waiting = null; p.room = null; p.result = null; p.finish = null; });
+    var rid = PK.room ? PK.room.id : null;
+    pkWrite(function (p) {
+      if (rid) p.rooms = (p.rooms || []).filter(function (r) { return r.id !== rid; });
+      p.result = null;
+    });
     PK.mode = '';
   }
   document.getElementById('pkEntry').addEventListener('click', function () { if (!ensureNick({ type: 'pk' })) return; window.openPk(); });
