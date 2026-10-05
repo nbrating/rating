@@ -3553,7 +3553,10 @@ window.__openMsg = openMsgModal;
       PK.endAt = Date.now();
       var rid = PK.room ? PK.room.id : null;
       pkWrite(function (p) {
-        var r = (p.rooms || []).filter(function (rr) { return rr.id === rid; })[0];
+        p.rooms = p.rooms || [];
+        var r = p.rooms.filter(function (rr) { return rr.id === rid; })[0];
+        /* 房间因写冲突丢失 → 本地补建（带完成时间），防止 finish 静默丢失导致卡局 */
+        if (!r && PK.room) { r = PK.room; r.finish = {}; r.result = null; p.rooms.push(r); }
         if (r) { r.finish = r.finish || {}; r.finish[me.id] = PK.endAt; }
       });
       PK.done = true;
@@ -3744,8 +3747,8 @@ window.__openMsg = openMsgModal;
           .then(function (d) {
             if (d.content && d.content.sha) { CLOUD.shaPk = d.content.sha; }
             else if (d.message && /sha|conflict|version/i.test(d.message)) {
-              /* 版本冲突（多人并发写）：取最新 sha 重试，最多 3 次 */
-              if (tries < 3) {
+              /* 版本冲突（多人并发写）：取最新 sha 重试，最多 5 次 */
+              if (tries < 5) {
                 tries++;
                 fetch(apiPk, { headers: cloudHeaders() }).then(function (r2) { return r2.json(); })
                   .then(function (j2) { if (j2 && j2.sha) { CLOUD.shaPk = j2.sha; putPk(j2.sha); } })
@@ -3753,8 +3756,8 @@ window.__openMsg = openMsgModal;
               }
             }
           }).catch(function () {
-            /* 网络失败：取最新 sha 重试，最多 3 次 */
-            if (tries < 3) {
+            /* 网络失败：取最新 sha 重试，最多 5 次 */
+            if (tries < 5) {
               tries++;
               fetch(apiPk, { headers: cloudHeaders() }).then(function (r2) { return r2.json(); })
                 .then(function (j2) { if (j2 && j2.sha) { CLOUD.shaPk = j2.sha; putPk(j2.sha); } })
@@ -3794,6 +3797,13 @@ window.__openMsg = openMsgModal;
     var room = { id: 'pk' + Date.now(), p1: w.uid, p2: me.id, roleId: role.id, eRoleId: eRole.id, startAt: Date.now(), finish: null, result: null, sync: {} };
     room.nicks = {}; room.nicks[w.uid] = w.nick || '对手'; room.nicks[me.id] = me.nick || '对手';
     pkWrite(function (p) { p.waiting = null; p.rooms = p.rooms || []; p.rooms.push(room); });
+    /* 房间补写校验：1.5 秒后确认房间已写入，因写冲突丢失则补写（防"匹配写入失败"） */
+    setTimeout(function () {
+      pkRead(true).then(function (pk) {
+        var found = (pk.rooms || []).some(function (rr) { return rr.id === room.id; });
+        if (!found) pkWrite(function (p) { p.rooms = p.rooms || []; if (!p.rooms.some(function (rr) { return rr.id === room.id; })) p.rooms.push(room); });
+      }).catch(function () {});
+    }, 1500);
     showPkBody('<div style="font-size:17px;font-weight:900;color:#ffd94d;margin:10px 0;">⚔️ 匹配成功！对手在线！</div>' +
       '<div style="font-size:13px;color:var(--muted);">双方使用同一个角色「' + role.name + '」对战，2 秒后开始！</div>');
     /* 2.5 秒后直接开战（房间写入已由 pkWrite 重试 3 次保障；不再读缓存验证，避免 CDN 延迟误报"写入失败"） */
@@ -3843,6 +3853,15 @@ window.__openMsg = openMsgModal;
         if (!PK.mode) { clearInterval(PK.timer); return; }
         if (PK.mode === 'join') return;   // 正在写入房间（pkJoin 的 2.5 秒确认会接手）
         var my = pkMyRoom(pk.rooms);
+        /* 对局中但房间丢失（写冲突）→ 本地补建房间（带完成时间），避免卡死 */
+        if (PK.mode === 'game' && !my && PK.room && PK.endAt) {
+          pkWrite(function (p) {
+            p.rooms = p.rooms || [];
+            var r = p.rooms.filter(function (rr) { return rr.id === PK.room.id; })[0];
+            if (!r) { PK.room.finish = {}; PK.room.finish[me.id] = PK.endAt; PK.room.result = null; p.rooms.push(PK.room); }
+          });
+          return;
+        }
         /* 挂起：等待超时 120 秒 */
         if (PK.mode === 'wait' && !my && pk.waiting && pk.waiting.uid === me.id && Date.now() - PK.matchSince > 120000) {
           clearInterval(PK.timer); PK.mode = '';
