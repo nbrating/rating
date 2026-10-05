@@ -2549,21 +2549,34 @@ function renderLogs(tab) {
     var scoresM = (state.daily && state.daily.scores) || {};   // 玩家管理按每日榜排序（主榜）
     var passesM = state.playerPasses || {};
     var pmap = {};
-    var nickOf = function (uid) {                  // 优先真实昵称：密码表 → 活跃榜 → 记录
-      var n = (passesM[uid] && passesM[uid].n) || (scoresM[uid] && scoresM[uid].n) || '';
-      return n && n !== '匿名' ? n : '';
+    /* 昵称索引：从投票/评论/寿来~ 记录收集每个玩家的真实昵称（优先非匿名） */
+    var nickIndex = {};
+    state.ratings.concat(state.comments).concat(state.hits || []).forEach(function (r) {
+      if (r && r.userId && r.nick && r.nick !== '匿名' && !nickIndex[r.userId]) nickIndex[r.userId] = r.nick;
+    });
+    var nickOf = function (uid) {                  // 真实昵称：密码表 → 活跃榜 → 操作记录 → ''
+      var n1 = passesM[uid] && passesM[uid].n, n2 = scoresM[uid] && scoresM[uid].n;
+      if (n1 && n1 !== '匿名') return n1;
+      if (n2 && n2 !== '匿名') return n2;
+      return nickIndex[uid] || '';
     };
+    var nickFix = false;                           // 是否修正了云端"匿名"（写回真实昵称）
     Object.keys(passesM).forEach(function (k) {
-      pmap[k] = { nick: nickOf(k) || '匿名', s: (scoresM[k] && scoresM[k].s) || 0, p: passesM[k].p || '' };
+      var real = nickOf(k);
+      pmap[k] = { nick: real || '匿名', s: (scoresM[k] && scoresM[k].s) || 0, p: passesM[k].p || '' };
+      if (real && (!passesM[k].n || passesM[k].n === '匿名')) { passesM[k].n = real; nickFix = true; }
     });
     Object.keys(scoresM).forEach(function (k) {
-      if (!pmap[k]) pmap[k] = { nick: nickOf(k) || '匿名', s: scoresM[k].s || 0, p: '' };
-      else if (!pmap[k].nick || pmap[k].nick === '匿名') pmap[k].nick = nickOf(k) || pmap[k].nick;
+      var real = nickOf(k);
+      if (!pmap[k]) pmap[k] = { nick: real || '匿名', s: scoresM[k].s || 0, p: '' };
+      else if (!pmap[k].nick || pmap[k].nick === '匿名') pmap[k].nick = real || pmap[k].nick;
+      if (real && passesM[k] && (!passesM[k].n || passesM[k].n === '匿名')) { passesM[k].n = real; nickFix = true; }
     });
     /* 追加所有"注册过名字"的玩家（评过级 / 评论过 / 设过密码 / 有活跃值的都算） */
     state.ratings.concat(state.comments).forEach(function (r) {
       if (r && r.userId && !pmap[r.userId]) pmap[r.userId] = { nick: (r.nick && r.nick !== '匿名' ? r.nick : (nickOf(r.userId) || '匿名')), s: 0, p: '' };
     });
+    if (nickFix) { save(); }                       // 把真实昵称写回云端（一次修复，永久生效）
     var plist = Object.keys(pmap).map(function (k) { return { id: k, nick: pmap[k].nick, s: pmap[k].s, p: pmap[k].p }; })
       .sort(function (a, b) { return b.s - a.s; });
     var pHtml = '';
