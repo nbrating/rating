@@ -3632,14 +3632,25 @@ window.__openMsg = openMsgModal;
       var nk = { waiting: null, room: null, result: null, finish: null };
       if (pk) { nk.waiting = pk.waiting || null; nk.room = pk.room || null; nk.result = pk.result || null; nk.finish = pk.finish || null; }
       fn(nk);
-      var payload = { message: 'pk ' + now(), content: b64Encode(JSON.stringify(nk)) };
       var apiPk = 'https://api.github.com/repos/nbrating/rating/contents/data_pk.json';
-      fetch(apiPk, { headers: cloudHeaders() })
-        .then(function (r) { return r.json(); })
+      var putPk = function (sha) {
+        var payload = { message: 'pk ' + now(), content: b64Encode(JSON.stringify(nk)) };
+        if (sha) payload.sha = sha;
+        return fetch(apiPk, { method: 'PUT', headers: cloudHeaders(), body: JSON.stringify(payload) }).then(function (r) { return r.json(); })
+          .then(function (d) {
+            if (d.content && d.content.sha) { CLOUD.shaPk = d.content.sha; }
+            else if (d.message && /sha|conflict|version/i.test(d.message) && !sha) {
+              fetch(apiPk, { headers: cloudHeaders() }).then(function (r2) { return r2.json(); })
+                .then(function (j2) { if (j2.sha) putPk(j2.sha); }).catch(function () {});
+            }
+          }).catch(function () {});
+      };
+      if (CLOUD.shaPk) { putPk(CLOUD.shaPk); return; }
+      fetch(apiPk, { headers: cloudHeaders() }).then(function (r) { return r.json(); })
         .then(function (j) {
-          if (j && j.sha) payload.sha = j.sha;
-          return fetch(apiPk, { method: 'PUT', headers: cloudHeaders(), body: JSON.stringify(payload) });
-        }).catch(function () {});
+          if (j && j.sha) { CLOUD.shaPk = j.sha; putPk(j.sha); }
+          else putPk(null);   // 文件不存在 → 首次创建
+        }).catch(function () { putPk(null); });
     });
   }
   function pkWait() {
@@ -3687,6 +3698,12 @@ window.__openMsg = openMsgModal;
           pkWrite(function (p) { if (p.waiting && p.waiting.uid === me.id) p.waiting = null; });
           showPkBody('<div style="font-size:16px;font-weight:800;color:var(--muted);margin:10px 0;">⏰ 60秒内无人加入</div><div style="font-size:13px;color:var(--muted);">下次再喊上小伙伴一起吧~</div>');
           document.getElementById('pkOk').style.display = 'none';
+          return;
+        }
+        /* 挂起中发现新的对手等待者 → 主动加入（两人同时挂起也能匹配） */
+        if (PK.mode === 'wait' && !pk.room && pk.waiting && pk.waiting.uid && pk.waiting.uid !== me.id) {
+          clearInterval(PK.timer);
+          pkJoin(pk.waiting);
           return;
         }
         /* 等待者：对手加入 → 开战 */
