@@ -3630,7 +3630,7 @@ window.__openMsg = openMsgModal;
   };
   function pkStart(pick) {
     var okBtn = document.getElementById('pkOk'); okBtn.style.display = 'none';
-    pkRead().then(function (pk) {
+    pkRead(true).then(function (pk) {
       pk = pk || {};
       /* 我的对局（rooms 里找自己）：已完成则等待/判胜，未完成立即开战 */
       var my = pkMyRoom(pk.rooms);
@@ -3703,9 +3703,15 @@ window.__openMsg = openMsgModal;
     document.getElementById('pkOk').style.display = 'none';
     pkPoll();
   }
-  function pkRead() {
-    return fetch('https://nbrating.github.io/rating/data_pk.json', { cache: 'no-store' }).then(function (r) { return r.json(); })
+  function pkRead(useApi) {
+    /* useApi=true：直读 GitHub API（实时，无 CDN 缓存延迟）——用于点匹配/写入前读取；
+       useApi=false（默认）：读 Pages CDN（无速率限制）——用于 3 秒轮询 */
+    var url = useApi
+      ? 'https://api.github.com/repos/nbrating/rating/contents/data_pk.json'
+      : 'https://nbrating.github.io/rating/data_pk.json';
+    return fetch(url, useApi ? { headers: cloudHeaders() } : { cache: 'no-store' }).then(function (r) { return r.json(); })
       .then(function (d) {
+        if (useApi && d && d.content) d = JSON.parse(b64Decode(d.content));
         d = d || {};
         /* 兼容旧结构（room/finish 单房间）→ 新结构 rooms 数组（多人同时多局） */
         if (!d.rooms && d.room) { d.rooms = [d.room]; delete d.room; }
@@ -3714,7 +3720,7 @@ window.__openMsg = openMsgModal;
       }).catch(function () { return { waiting: null, rooms: [], result: null }; });
   }
   function pkWrite(fn) {
-    pkRead().then(function (pk) {
+    pkRead(true).then(function (pk) {
       var nk = { waiting: null, rooms: [], result: null };
       if (pk) { nk.waiting = pk.waiting || null; nk.rooms = pk.rooms || []; nk.result = pk.result || null; }
       fn(nk);
