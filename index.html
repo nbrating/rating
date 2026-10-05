@@ -513,6 +513,7 @@ if (!location.search.match(/[?&]v=\d+/)) {
     50% { box-shadow: 0 0 26px rgba(255,179,0,.9); transform: scale(1.06); }
   }
   .game-mask { z-index: 90; }
+  #pkMask { z-index: 120; }
   .game {
     width: 100%; max-width: 420px; background: #10131c; border: 1px solid rgba(0,229,255,.25);
     border-radius: 20px; padding: 16px; box-shadow: 0 0 40px rgba(0,229,255,.12);
@@ -3713,9 +3714,12 @@ window.__openMsg = openMsgModal;
         return fetch(apiPk, { method: 'PUT', headers: cloudHeaders(), body: JSON.stringify(payload) }).then(function (r) { return r.json(); })
           .then(function (d) {
             if (d.content && d.content.sha) { CLOUD.shaPk = d.content.sha; }
-            else if (d.message && /sha|conflict|version/i.test(d.message) && !sha) {
+            else if (d.message && /sha|conflict|version/i.test(d.message)) {
+              /* 版本冲突（并发写）：取最新 sha 重试一次（避免带缓存 sha 冲突后静默失败） */
               fetch(apiPk, { headers: cloudHeaders() }).then(function (r2) { return r2.json(); })
-                .then(function (j2) { if (j2.sha) putPk(j2.sha); }).catch(function () {});
+                .then(function (j2) {
+                  if (j2 && j2.sha) { CLOUD.shaPk = j2.sha; putPk(j2.sha); }
+                }).catch(function () {});
             }
           }).catch(function () {});
       };
