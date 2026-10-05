@@ -3212,7 +3212,7 @@ window.__openMsg = openMsgModal;
     var b = document.getElementById('gameBody');
     b.innerHTML =
       '<div class="race-tip" id="raceTip">' + (pkGame ? '⚔️ 在线对战！谁先冲线谁赢，赢家掠夺对方积分！' : '🥇 谁先冲过终点谁赢！点按钮加速奔跑') + '</div>' +
-      laneHtml(G.player, '你', false) + laneHtml(G.enemy, '机器人', true) +
+      laneHtml(G.player, '你', false) + laneHtml(G.enemy, pkGame ? '对手 ' + esc2(PK.oppNick || '') : '机器人', true) +
       '<div class="battle-log" id="bLog"></div>' +
       '<div class="battle-acts" id="bActs">' +
       '<button class="btn spr" data-a="spr">🏃 冲刺</button>' +
@@ -3225,6 +3225,13 @@ window.__openMsg = openMsgModal;
       var btn = ev.target.closest('[data-a]');
       if (btn && !G.busy) playerAct(btn.dataset.a);
     });
+    if (pkGame) {
+      /* PK 模式：真人互相比——禁用嘲讽/香蕉皮（对AI道具），启动进度同步 */
+      var actBtns = document.querySelectorAll('#bActs .btn');
+      if (actBtns[3]) actBtns[3].style.display = 'none';
+      if (actBtns[4]) actBtns[4].style.display = 'none';
+      pkSyncStart();
+    }
     log('sys', '🏁 发令枪响！「' + G.player.role.name + '」vs「' + G.enemy.role.name + '」开跑！');
     log('sys', G.player.speed > G.enemy.speed ? '你的选手速度略快，优势在你！' : (G.player.speed < G.enemy.speed ? '对手比你强一点点，赢了他就是逆风翻盘！' : '双方速度相当，胜负全靠操作和运气！'));
     infoPop(G.player.speed > G.enemy.speed ? '🏁 开跑！你的选手略快！' : (G.player.speed < G.enemy.speed ? '🏁 开跑！对手略强，准备逆风翻盘！' : '🏁 开跑！势均力敌！'));
@@ -3310,7 +3317,7 @@ window.__openMsg = openMsgModal;
     var nowLead = p.prog > e.prog ? 'p' : (p.prog < e.prog ? 'e' : 'tie');
     if (nowLead !== G.lastLead) {
       if (nowLead === 'p') infoPop('🔥 你反超了！气势如虹！');
-      else if (nowLead === 'e') infoPop('😨 被机器人反超了！快加速！');
+      else if (nowLead === 'e') infoPop(PK.mode === 'game' ? '😨 被对手反超了！快加速！' : '😨 被机器人反超了！快加速！');
       G.lastLead = nowLead;
     }
     var acts = document.querySelectorAll('#bActs .btn');
@@ -3343,14 +3350,15 @@ window.__openMsg = openMsgModal;
     var bot = opts[Math.floor(Math.random() * 3)];
     var res = h === bot ? 'tie' : (beats[h] === bot ? 'win' : 'lose');
     var s = G.player, txt;
+    var vsName = PK.mode === 'game' ? '对方' : '机器人';
     if (res === 'win') {
       s.stm = Math.min(100, s.stm + 20);
-      txt = '你出' + names[h] + ' vs 机器人出' + names[bot] + '，赢了！体力 +20 💪';
+      txt = '你出' + names[h] + ' vs ' + vsName + '出' + names[bot] + '，赢了！体力 +20 💪';
     } else if (res === 'lose') {
       s.stm = Math.max(0, s.stm - 15);
-      txt = '你出' + names[h] + ' vs 机器人出' + names[bot] + '，输了！体力 -15 😩';
+      txt = '你出' + names[h] + ' vs ' + vsName + '出' + names[bot] + '，输了！体力 -15 😩';
     } else {
-      txt = '你出' + names[h] + ' vs 机器人出' + names[bot] + '，平局！气势不减';
+      txt = '你出' + names[h] + ' vs ' + vsName + '出' + names[bot] + '，平局！气势不减';
     }
     document.getElementById('rpsResult').textContent = txt;
     document.querySelectorAll('.rps-p').forEach(function (b) {
@@ -3412,6 +3420,7 @@ window.__openMsg = openMsgModal;
       p.cool.hyd = 2;
       log('pl', '🧋 吨吨吨补水，体力 +30（边跑边喝前进了 ' + Math.round(base * .6) + ' 米）');
     } else if (a === 'tunt') {
+      if (PK.mode === 'game') { log('sys', '⚔️ PK 对战靠实力，不能嘲讽对手！'); refreshRace(); return; }
       if (p.cool.tunt > 0) { log('sys', '刚嘲讽过，等' + p.cool.tunt + '回合再嘲讽'); refreshRace(); return; }
       var roll = Math.random();
       if (roll < .35) {
@@ -3431,6 +3440,7 @@ window.__openMsg = openMsgModal;
       }
       p.cool.tunt = 3;
     } else if (a === 'banana') {
+      if (PK.mode === 'game') { log('sys', '⚔️ PK 对战靠实力，不能扔香蕉皮！'); refreshRace(); return; }
       if (p.cool.banana > 0) { log('sys', '刚扔过香蕉皮，等' + p.cool.banana + '回合再扔'); refreshRace(); return; }
       if (Math.random() < .7) {
         var bd = Math.round(base * rnd(1, 1.5));
@@ -3450,7 +3460,7 @@ window.__openMsg = openMsgModal;
     if (Math.random() < .08) randomEvent('p');
     refreshRace();
     if (p.prog >= 100) { endGame(true); return; }
-    setTimeout(enemyAct, 800);
+    if (PK.mode !== 'game') setTimeout(enemyAct, 800);   // PK 模式：敌方是真人，进度由云端同步，不走 AI
     G.turn++;
     if (G.turn % 3 === 0) setTimeout(openRps, 1100);
   }
@@ -3539,6 +3549,7 @@ window.__openMsg = openMsgModal;
     }
     /* PK 模式：不上报普通战绩/活跃值，上传完成时间等对手，比用时定胜负 */
     if (PK.mode === 'game') {
+      if (PK.syncTimer) { clearInterval(PK.syncTimer); PK.syncTimer = null; }
       PK.endAt = Date.now();
       var rid = PK.room ? PK.room.id : null;
       pkWrite(function (p) {
@@ -3547,11 +3558,11 @@ window.__openMsg = openMsgModal;
       });
       PK.done = true;
       G.busy = false;
-      document.getElementById('gameTitle').textContent = '⏳ PK完成，等待对手…';
+      document.getElementById('gameTitle').textContent = '🏁 你已冲线！';
       document.getElementById('gameBody').innerHTML = '<div class="result-area result-lose">' +
-        '<div class="result-emoji">⏳</div>' +
+        '<div class="result-emoji">🏁</div>' +
         '<div class="result-title">你已完成比赛！</div>' +
-        '<div class="result-sub">成绩已上传，等待对手完成…<br>（对方完成后自动弹出PK结果）</div>' +
+        '<div class="result-sub">用时已上传，对手也正在跑。<br>双方跑完自动比用时定胜负（对方 60 秒内没跑完，直接判你赢！）</div>' +
         '<div class="row2" style="margin-top:16px;"><button class="btn ghost" id="gameExit">退出</button></div></div>';
       document.getElementById('gameExit').addEventListener('click', function () { closeMask('gameMask'); });
       pkPoll();
@@ -3780,26 +3791,48 @@ window.__openMsg = openMsgModal;
     var role = pool[Math.floor(Math.random() * pool.length)];
     var eRole = pool[Math.floor(Math.random() * pool.length)];
     if (!role || !eRole) { toast('人物不够，无法PK'); closeMask('pkMask'); PK.mode = ''; return; }
-    var room = { id: 'pk' + Date.now(), p1: w.uid, p2: me.id, roleId: role.id, eRoleId: eRole.id, startAt: Date.now(), finish: null, result: null };
+    var room = { id: 'pk' + Date.now(), p1: w.uid, p2: me.id, roleId: role.id, eRoleId: eRole.id, startAt: Date.now(), finish: null, result: null, sync: {} };
+    room.nicks = {}; room.nicks[w.uid] = w.nick || '对手'; room.nicks[me.id] = me.nick || '对手';
     pkWrite(function (p) { p.waiting = null; p.rooms = p.rooms || []; p.rooms.push(room); });
     showPkBody('<div style="font-size:17px;font-weight:900;color:#ffd94d;margin:10px 0;">⚔️ 匹配成功！对手在线！</div>' +
       '<div style="font-size:13px;color:var(--muted);">双方使用同一个角色「' + role.name + '」对战，2 秒后开始！</div>');
     /* 2.5 秒后直接开战（房间写入已由 pkWrite 重试 3 次保障；不再读缓存验证，避免 CDN 延迟误报"写入失败"） */
     setTimeout(function () { startPkGame(room); }, 2500);
   }
+  /* PK 进度同步：每 5 秒上传自己进度 + 拉取对方进度（画面上对方角色实时移动，真正互相比） */
+  function pkSyncStart() {
+    if (PK.syncTimer) clearInterval(PK.syncTimer);
+    PK.syncTimer = setInterval(function () {
+      if (PK.mode !== 'game' || !PK.room || !G.player) { clearInterval(PK.syncTimer); return; }
+      var rid = PK.room.id;
+      pkWrite(function (p) {
+        var r = (p.rooms || []).filter(function (rr) { return rr.id === rid; })[0];
+        if (r) { r.sync = r.sync || {}; r.sync[me.id] = { prog: G.player.prog, t: Date.now() }; }
+      });
+      pkRead().then(function (p) {
+        var r = (p.rooms || []).filter(function (rr) { return rr.id === rid; })[0];
+        if (!r || !r.sync || !G.enemy) return;
+        var other = r.p1 === me.id ? r.p2 : r.p1;
+        var s = other && r.sync[other];
+        if (s) G.enemy.prog = Math.max(G.enemy.prog || 0, s.prog);
+      });
+    }, 5000);
+  }
   function startPkGame(room) {
     closeMask('pkMask');
     PK.mode = 'game'; PK.room = room; PK.endAt = 0; PK.done = false;
     var pRole = state.people.find(function (p) { return p.id === room.roleId; }) || state.people[0];
-    var eRole = state.people.find(function (p) { return p.id === room.eRoleId; }) || state.people[1];
-    if (!pRole || !eRole) { toast('人物异常'); PK.mode = ''; return; }
-    var ps = statsOf(pRole.id), es = statsOf(eRole.id);
+    if (!pRole) { toast('人物异常'); PK.mode = ''; return; }
+    var otherId = room.p1 === me.id ? room.p2 : room.p1;
+    PK.oppNick = (room.nicks && room.nicks[otherId]) || '对手';
+    var ps = statsOf(pRole.id);
+    /* PK：双方用同一角色互相比（敌方进度由对方端上传同步，画面无机器人） */
     G.player = { role: pRole, speed: ps.speed, prog: 0, stm: 80, cool: { hyd: 0, tunt: 0, banana: 0 } };
-    G.enemy = { role: eRole, speed: es.speed, prog: 0, stm: 80, cool: { hyd: 0, tunt: 0, banana: 0 } };
+    G.enemy = { role: pRole, speed: ps.speed, prog: 0, stm: 80, cool: { hyd: 0, tunt: 0, banana: 0 } };
     G.busy = false; G.guessed = false; G.cheatUsed = false;
     openMask('gameMask');
     startRace();
-    log('sys', '⚔️ 在线PK：你和对手同用「' + pRole.name + '」对战，谁先冲线用时短谁赢！');
+    log('sys', '⚔️ 在线PK：你 vs ' + esc2(PK.oppNick) + '（双方同用「' + pRole.name + '」），谁先冲线谁赢！');
     pkPoll();
   }
   function pkPoll() {
@@ -3852,6 +3885,24 @@ window.__openMsg = openMsgModal;
           startPkGame(my);
           return;
         }
+        /* 我的对局：自己已完成，对方 60 秒没跑完 → 判对方弃权，我方获胜 */
+        if (my && my.finish && my.finish[me.id]) {
+          var other0 = my.p1 === me.id ? my.p2 : my.p1;
+          if (other0 && !my.finish[other0] && Date.now() - my.finish[me.id] > 60000) {
+            clearInterval(PK.timer);
+            pkWrite(function (p) {
+              var r = (p.rooms || []).filter(function (rr) { return rr.id === my.id; })[0];
+              if (r) { r.finish = null; r.result = { winner: me.id, loser: other0, loot: 0, state: 'loot', t: Date.now(), forfeit: true }; }
+            });
+            setTimeout(function () {
+              pkRead(true).then(function (p2) {
+                var r2 = (p2.rooms || []).filter(function (rr) { return rr.id === my.id; })[0];
+                if (r2 && r2.result) showPkResult(r2.result);
+              });
+            }, 2000);
+            return;
+          }
+        }
         /* 我的对局：双方都完成 → 判胜 */
         if (my && my.finish && my.finish[me.id]) {
           var other = my.p1 === me.id ? my.p2 : my.p1;
@@ -3883,7 +3934,7 @@ window.__openMsg = openMsgModal;
     PK.mode = 'result';
     var meWin = res.winner === me.id;
     openMask('pkMask');
-    document.getElementById('pkTitle').textContent = meWin ? '🏆 PK胜利！' : '😵 PK失败';
+    document.getElementById('pkTitle').textContent = meWin ? (res.forfeit ? '🏆 对方超时，你赢了！' : '🏆 PK胜利！') : '😵 PK失败';
     var okBtn = document.getElementById('pkOk');
     if (meWin) {
       if (res.state === 'done') {
@@ -3932,6 +3983,7 @@ window.__openMsg = openMsgModal;
     save();
   }
   function clearPk() {
+    if (PK.syncTimer) { clearInterval(PK.syncTimer); PK.syncTimer = null; }
     var rid = PK.room ? PK.room.id : null;
     pkWrite(function (p) {
       if (rid) p.rooms = (p.rooms || []).filter(function (r) { return r.id !== rid; });
@@ -3939,8 +3991,13 @@ window.__openMsg = openMsgModal;
     });
     PK.mode = '';
   }
-  document.getElementById('pkEntry').addEventListener('click', function () { if (!ensureNick({ type: 'pk' })) return; window.openPk(); });
+  document.getElementById('pkEntry').addEventListener('click', function () {
+    if (!ensureNick({ type: 'pk' })) return;
+    if (PK.mode === 'game' || PK.mode === 'room' || PK.mode === 'join') { toast('你正在对局中，先完成当前对局吧！'); return; }
+    window.openPk();
+  });
   document.getElementById('pkCancel').addEventListener('click', function () {
+    if (PK.syncTimer) { clearInterval(PK.syncTimer); PK.syncTimer = null; }
     closeMask('pkMask');
     if (PK.mode === 'wait') pkWrite(function (p) { if (p.waiting && p.waiting.uid === me.id) p.waiting = null; });
     if (PK.timer) { clearInterval(PK.timer); PK.timer = null; }
