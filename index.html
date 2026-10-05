@@ -734,6 +734,19 @@ if (!location.search.match(/[?&]v=\d+/)) {
     </div>
   </div>
 
+  <!-- ===== 后台：修改玩家昵称弹窗 ===== -->
+  <div class="mask" id="admNickMask">
+    <div class="modal">
+      <h3>✏️ 修改玩家昵称</h3>
+      <div class="tip">把"匿名"改成玩家真实昵称（保存后云端永久生效）</div>
+      <div class="field" style="margin:14px 0 4px;"><input id="admNickInput" maxlength="12" placeholder="输入真实昵称" style="width:100%;"></div>
+      <div class="row2" style="margin-top:14px;">
+        <button class="btn ghost" id="admNickCancel">取消</button>
+        <button class="btn ok" id="admNickOk">保存</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ===== 查看/修改私人密码弹窗 ===== -->
   <div class="mask" id="pwdViewMask">
     <div class="modal">
@@ -2456,6 +2469,29 @@ function adjustPlayerScore(uid, d) {
   toast('已给「' + dc.n + '」' + (d > 0 ? '+' : '') + d + ' 活跃值');
 }
 
+/* --- 后台：修改玩家昵称 --- */
+var admNickUid = null;
+function openAdmNick(uid, nick) {
+  if (!uid) return;
+  admNickUid = uid;
+  document.getElementById('admNickInput').value = (nick && nick !== '匿名') ? nick : '';
+  openMask('admNickMask');
+}
+document.getElementById('admNickCancel').addEventListener('click', function () { closeMask('admNickMask'); });
+document.getElementById('admNickOk').addEventListener('click', function () {
+  var v = document.getElementById('admNickInput').value.trim().slice(0, 12);
+  if (!v) { toast('请输入昵称'); return; }
+  if (admNickUid) {
+    state.playerPasses = state.playerPasses || {};
+    state.playerPasses[admNickUid] = state.playerPasses[admNickUid] || { n: '', p: '' };
+    state.playerPasses[admNickUid].n = v;
+    save();
+    closeMask('admNickMask');
+    renderLogs('players');
+    toast('昵称已更新');
+  }
+});
+
 /* 玩家进入页面时：被管理员调过分的弹窗提示（每个玩家只弹最近一次，本地去重） */
 function checkScoreNotice() {
   try {
@@ -2604,7 +2640,8 @@ function renderLogs(tab) {
                 '<button class="pbtn" data-delta="-1" data-uid="' + pl.id + '">−1</button>' +
                 '<button class="pbtn" data-delta="1" data-uid="' + pl.id + '">+1</button>' +
                 '<input class="prow-in" type="number" placeholder="自定义" style="width:52px;padding:4px;border-radius:6px;border:1px solid var(--line);background:rgba(255,255,255,.05);color:var(--text);font-size:12px;">' +
-                '<button class="pbtn" data-custom="1" data-uid="' + pl.id + '">调</button></span>') +
+                '<button class="pbtn" data-custom="1" data-uid="' + pl.id + '">调</button>' +
+                '<button class="pbtn" data-nick="1" data-uid="' + pl.id + '" data-nickv="' + esc(pl.nick) + '" style="color:#7df;">✏️</button></span>') +
             '</div>';
         }).join('');
     }
@@ -2646,6 +2683,11 @@ document.getElementById('adminLogs').addEventListener('click', function (e) {
     var v = inp ? parseFloat(inp.value) : NaN;
     if (isNaN(v) || v === 0) { toast('请输入非零数值'); return; }
     adjustPlayerScore(pCustom.getAttribute('data-uid'), v);
+    return;
+  }
+  var pNick = e.target.closest('[data-nick]');
+  if (pNick) {
+    openAdmNick(pNick.getAttribute('data-uid'), pNick.getAttribute('data-nickv'));
     return;
   }
   var edit = e.target.closest('[data-edit]');
