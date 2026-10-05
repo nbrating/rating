@@ -1733,12 +1733,20 @@ function autoCleanup() {
   state.cleanupAt = now + 5 * 86400000;
   save();
 }
-function dailyTop() {                            // 每日榜前5（0 分不计，按分倒序）
-  var d = state.daily || {};
-  var arr = Object.keys(d.scores || {}).map(function (id) { return { id: id, n: d.scores[id].n, s: d.scores[id].s || 0 }; })
+function mergeTop(src) {                            // 同昵称多号合并（防微信清缓存导致身份换号，分数相加只显示一个）
+  var m = {};
+  Object.keys(src || {}).forEach(function (id) {
+    var d = src[id], n = (d && d.n) || '匿名', s = (d && d.s) || 0;
+    if (!(s > 0)) return;
+    m[n] = m[n] || { id: id, n: n, s: 0 };
+    m[n].s = Math.round((m[n].s + s) * 10) / 10;
+  });
+  return Object.keys(m).map(function (n) { return m[n]; })
     .filter(function (t) { return t.s > 0; })
     .sort(function (x, y) { return y.s - x.s; });
-  return arr.slice(0, 5);
+}
+function dailyTop() {                            // 每日榜前5（0 分不计，按分倒序）
+  return mergeTop((state.daily || {}).scores).slice(0, 5);
 }
 function activityAdd(pts) {                         // 给当前玩家加活跃值（管理员不加分；每日榜始终累计，活动榜仅在开启时累计）
   if (!(pts > 0)) return;
@@ -1759,11 +1767,7 @@ function activityAdd(pts) {                         // 给当前玩家加活跃�
   }
 }
 function activityTop() {                            // 本轮前5（0 分不计入榜单，按分倒序）
-  var a = state.activity || {};
-  var arr = Object.keys(a.scores || {}).map(function (id) { return { id: id, n: a.scores[id].n, s: a.scores[id].s || 0 }; })
-    .filter(function (t) { return t.s > 0; })
-    .sort(function (x, y) { return y.s - x.s; });
-  return arr.slice(0, 5);
+  return mergeTop((state.activity || {}).scores).slice(0, 5);
 }
 function actRemainText(a) {                        // 剩余时间文案
   if (!a || !a.enabled || !a.endAt) return '';
@@ -2619,8 +2623,24 @@ function renderLogs(tab) {
       if (r && r.userId && !pmap[r.userId]) pmap[r.userId] = { nick: (r.nick && r.nick !== '匿名' ? r.nick : (nickOf(r.userId) || '匿名')), s: 0, p: '' };
     });
     if (nickFix) { save(); }                       // 把真实昵称写回云端（一次修复，永久生效）
-    var plist = Object.keys(pmap).map(function (k) { return { id: k, nick: pmap[k].nick, s: pmap[k].s, p: pmap[k].p }; })
+    var plist0 = Object.keys(pmap).map(function (k) { return { id: k, nick: pmap[k].nick, s: pmap[k].s, p: pmap[k].p }; })
       .sort(function (a, b) { return b.s - a.s; });
+    /* 同昵称多号合并（身份换号防重复：分数相加、密码取非空、代表号取活跃分高的那个） */
+    var plist = [];
+    plist0.forEach(function (pl) {
+      var same = null;
+      for (var i = 0; i < plist.length; i++) {
+        if (plist[i].nick === pl.nick) { same = plist[i]; break; }
+      }
+      if (same) {
+        same.s = Math.round((same.s + pl.s) * 10) / 10;
+        if (pl.p && !same.p) same.p = pl.p;
+        if (pl.s > same.ref) { same.id = pl.id; same.ref = pl.s; }
+      } else {
+        plist.push({ id: pl.id, nick: pl.nick, s: pl.s, p: pl.p, ref: pl.s });
+      }
+    });
+    plist.sort(function (a, b) { return b.s - a.s; });
     var pHtml = '';
     if (!plist.length) {
       pHtml = '<div class="empty">还没有玩家注册</div>';
