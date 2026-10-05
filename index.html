@@ -489,6 +489,25 @@ if (!location.search.match(/[?&]v=\d+/)) {
     transition: transform .15s;
   }
   .game-entry .ge-go:hover { transform: scale(1.08); }
+  .pk-entry {
+    margin: 12px 16px 0; border-radius: 14px; padding: 12px 14px;
+    display: flex; align-items: center; gap: 10px; cursor: pointer;
+    background: linear-gradient(90deg, rgba(255,60,80,.22), rgba(255,150,50,.18), rgba(255,179,0,.22));
+    border: 2px solid rgba(255,90,90,.65);
+    animation: floaty 3s ease-in-out infinite;
+    position: relative; z-index: 1;
+  }
+  .pk-entry .pk-left { font-size: 15px; font-weight: 900; color: #ff5f6d; white-space: nowrap; text-shadow: 0 0 12px rgba(255,60,80,.7); }
+  .pk-entry .pk-mid { flex: 1; font-size: 11px; color: var(--muted); line-height: 1.5; }
+  .pk-entry .pk-go {
+    font-size: 15px; font-weight: 900; color: #fff; cursor: pointer;
+    background: linear-gradient(135deg, #ff5f6d, #ff2d55, #ff9500);
+    border: none; border-radius: 999px; padding: 11px 18px; white-space: nowrap; flex: 0 0 auto;
+    box-shadow: 0 0 18px rgba(255,47,85,.7);
+    animation: goPulse 1.4s ease-in-out infinite;
+    transition: transform .15s;
+  }
+  .pk-entry .pk-go:hover { transform: scale(1.08); }
   @keyframes goPulse {
     0%, 100% { box-shadow: 0 0 10px rgba(255,179,0,.4); transform: scale(1); }
     50% { box-shadow: 0 0 26px rgba(255,179,0,.9); transform: scale(1.06); }
@@ -775,6 +794,13 @@ if (!location.search.match(/[?&]v=\d+/)) {
   <div class="sec-title">🎮 游戏人物票数榜 <span class="more">按票数排序</span></div>
   <div class="podium" id="podium"></div>
 
+  <!-- ===== 玩家间 PK 对战（显眼入口） ===== -->
+  <div class="pk-entry" id="pkEntry">
+    <div class="pk-left">⚔️ 玩家PK对战</div>
+    <div class="pk-mid">找到在线玩家 · 同角色赛跑 · 赢家掠夺对方积分！</div>
+    <div class="pk-go">开始匹配 ▶</div>
+  </div>
+
   <!-- ===== 小游戏入口 ===== -->
   <div class="game-entry" id="gameEntry">
     <div class="ge-left">🏁 运动会跑步比拼</div>
@@ -832,6 +858,18 @@ if (!location.search.match(/[?&]v=\d+/)) {
         <span id="gameWinCount"></span>
       </div>
       <div id="gameBody"></div>
+    </div>
+  </div>
+
+  <!-- ===== PK 匹配 / 结算弹窗 ===== -->
+  <div class="mask" id="pkMask">
+    <div class="modal">
+      <h3 id="pkTitle">⚔️ 玩家PK</h3>
+      <div id="pkBody" style="min-height:60px;text-align:center;"></div>
+      <div class="row2" style="margin-top:14px;">
+        <button class="btn ghost" id="pkCancel">关闭</button>
+        <button class="btn ok" id="pkOk" style="display:none;">确认掠夺</button>
+      </div>
     </div>
   </div>
 
@@ -1176,6 +1214,7 @@ function load() {
   d.adminHash = d.adminHash || '';    // 云端统一后台密码指纹（换设备密码保持一致）
   d.playerPasses = d.playerPasses || {};   // 玩家私人密码（云端存，后台可见，表层不公开）
   d.scoreNotices = d.scoreNotices || {};   // 管理员调分提示（按玩家存最近一条，玩家进入时弹窗）
+  d.pk = d.pk || { waiting: null, room: null, result: null, finish: null };   // 玩家PK（匹配/房间/结算）
   d.admin = d.admin || { userId: '', nick: '' };   // 管理员账号（不参与积分榜、名字占用保护、后台免密）  // 活跃值活动
       // 旧版"待审核"机制已移除：历史 pending 人物直接上架
       (d.people || []).forEach(function (p) { if (p.status === 'pending') p.status = 'approved'; });
@@ -1230,6 +1269,7 @@ function normalizeState(d) {
   d.adminHash = d.adminHash || '';    // 云端统一后台密码指纹（换设备密码保持一致）
   d.playerPasses = d.playerPasses || {};   // 玩家私人密码（云端存，后台可见，表层不公开）
   d.scoreNotices = d.scoreNotices || {};   // 管理员调分提示（按玩家存最近一条，玩家进入时弹窗）
+  d.pk = d.pk || { waiting: null, room: null, result: null, finish: null };   // 玩家PK（匹配/房间/结算）
   d.admin = d.admin || { userId: '', nick: '' };   // 管理员账号（不参与积分榜、名字占用保护、后台免密）
   if (d.activity) {   // 兼容旧格式活动数据（缺失字段补默认）
     if (d.activity.scores === undefined) d.activity.scores = {};
@@ -3156,11 +3196,12 @@ window.__openMsg = openMsgModal;
   }
 
   function startRace() {
-    document.getElementById('gameTitle').textContent = '🏁 运动会跑步比拼';
+    var pkGame = PK.mode === 'game';
+    document.getElementById('gameTitle').textContent = pkGame ? '⚔️ 玩家PK对战' : '🏁 运动会跑步比拼';
     G.turn = 0; G.waitRps = false; G.over = false; G.lastLead = 'tie'; G.actAt = 0;
     var b = document.getElementById('gameBody');
     b.innerHTML =
-      '<div class="race-tip" id="raceTip">🥇 谁先冲过终点谁赢！点按钮加速奔跑</div>' +
+      '<div class="race-tip" id="raceTip">' + (pkGame ? '⚔️ 在线对战！谁先冲线谁赢，赢家掠夺对方积分！' : '🥇 谁先冲过终点谁赢！点按钮加速奔跑') + '</div>' +
       laneHtml(G.player, '你', false) + laneHtml(G.enemy, '机器人', true) +
       '<div class="battle-log" id="bLog"></div>' +
       '<div class="battle-acts" id="bActs">' +
@@ -3486,6 +3527,22 @@ window.__openMsg = openMsgModal;
       document.getElementById('gameAgain').addEventListener('click', resetRace);
       return;
     }
+    /* PK 模式：不上报普通战绩/活跃值，上传完成时间等对手，比用时定胜负 */
+    if (PK.mode === 'game') {
+      PK.endAt = Date.now();
+      pkWrite(function (p) { p.finish = p.finish || {}; p.finish[me.id] = PK.endAt; });
+      PK.done = true;
+      G.busy = false;
+      document.getElementById('gameTitle').textContent = '⏳ PK完成，等待对手…';
+      document.getElementById('gameBody').innerHTML = '<div class="result-area result-lose">' +
+        '<div class="result-emoji">⏳</div>' +
+        '<div class="result-title">你已完成比赛！</div>' +
+        '<div class="result-sub">成绩已上传，等待对手完成…<br>（对方完成后自动弹出PK结果）</div>' +
+        '<div class="row2" style="margin-top:16px;"><button class="btn ghost" id="gameExit">退出</button></div></div>';
+      document.getElementById('gameExit').addEventListener('click', function () { closeMask('gameMask'); });
+      pkPoll();
+      return;
+    }
     /* 战绩上报（云端共享，创作者后台可查；耍赖局不计） */
     (state.gameLogs = state.gameLogs || []).push({
       id: uid(), nick: me.nick || '匿名', win: win, comeback: comeback,
@@ -3541,6 +3598,182 @@ window.__openMsg = openMsgModal;
     document.getElementById('gameExit').addEventListener('click', function () { closeMask('gameMask'); });
     document.getElementById('gameAgain').addEventListener('click', startDraw);
   }
+
+  /* ============ 玩家间 PK（轮询 + 云端状态，同角色比用时，赢家掠夺积分） ============ */
+  var PK = { mode: '', room: null, endAt: 0, timer: null, matchSince: 0, done: false };
+  window.openPk = function () {
+    if (PK.mode && PK.mode !== 'result') { toast('PK 进行中…'); return; }
+    if (!me || !me.id) { toast('请先设置昵称'); return; }
+    openMask('pkMask');
+    document.getElementById('pkTitle').textContent = '⚔️ 玩家PK对战';
+    showPkBody('<div style="font-size:15px;color:var(--muted);margin:8px 0;">正在寻找在线玩家…</div>');
+    document.getElementById('pkOk').style.display = 'none';
+    pkRead().then(function (pk) {
+      pk = pk || {};
+      if (pk.result && (pk.result.winner === me.id || pk.result.loser === me.id)) { showPkResult(pk.result); return; }
+      if (pk.room && (pk.room.p1 === me.id || pk.room.p2 === me.id)) {
+        PK.mode = 'room';
+        showPkBody('<div style="font-size:16px;font-weight:800;color:var(--accent);margin:10px 0;">对局进行中…</div><div style="font-size:13px;color:var(--muted);">等待对手完成比赛，请稍候。</div>');
+        pkPoll();
+        return;
+      }
+      if (pk.waiting && pk.waiting.uid && pk.waiting.uid !== me.id) { pkJoin(pk.waiting); return; }
+      pkWait();
+    });
+  };
+  function pkRead() {
+    return fetch(CLOUD.apiPages, { cache: 'no-store' }).then(function (r) { return r.json(); })
+      .then(function (d) { return (d && d.pk) || {}; }).catch(function () { return {}; });
+  }
+  function pkWrite(fn) {
+    pkRead().then(function (pk) {
+      var nk = { waiting: null, room: null, result: null, finish: null };
+      if (pk) { nk.waiting = pk.waiting || null; nk.room = pk.room || null; nk.result = pk.result || null; nk.finish = pk.finish || null; }
+      fn(nk);
+      state.pk = nk;
+      save();
+    });
+  }
+  function pkWait() {
+    PK.mode = 'wait'; PK.matchSince = Date.now(); PK.done = false;
+    pkWrite(function (p) { p.waiting = { uid: me.id, nick: me.nick || '匿名', t: Date.now() }; });
+    showPkBody('<div style="font-size:18px;font-weight:900;color:#ff5f6d;margin:10px 0;">📡 无人在线…</div>' +
+      '<div style="font-size:13px;color:var(--muted);line-height:1.7;">已为你挂起匹配，<b style="color:#ffd94d;">60 秒</b>内有对手加入就开战。<br>快喊小伙伴也点一下「⚔️ 玩家PK」！</div>');
+    pkPoll();
+  }
+  function pkJoin(w) {
+    PK.mode = 'join';
+    var pool = state.people.filter(function (p) { return p.name; });
+    var role = pool[Math.floor(Math.random() * pool.length)];
+    var eRole = pool[Math.floor(Math.random() * pool.length)];
+    if (!role || !eRole) { toast('人物不够，无法PK'); closeMask('pkMask'); PK.mode = ''; return; }
+    var room = { id: 'pk' + Date.now(), p1: w.uid, p2: me.id, roleId: role.id, eRoleId: eRole.id, startAt: Date.now() };
+    pkWrite(function (p) { p.waiting = null; p.room = room; });
+    showPkBody('<div style="font-size:17px;font-weight:900;color:#ffd94d;margin:10px 0;">⚔️ 匹配成功！对手在线！</div>' +
+      '<div style="font-size:13px;color:var(--muted);">双方使用同一个角色「' + role.name + '」对战，2 秒后开始！</div>');
+    setTimeout(function () { startPkGame(room); }, 2000);
+  }
+  function startPkGame(room) {
+    closeMask('pkMask');
+    PK.mode = 'game'; PK.room = room; PK.endAt = 0; PK.done = false;
+    var pRole = state.people.find(function (p) { return p.id === room.roleId; }) || state.people[0];
+    var eRole = state.people.find(function (p) { return p.id === room.eRoleId; }) || state.people[1];
+    if (!pRole || !eRole) { toast('人物异常'); PK.mode = ''; return; }
+    var ps = statsOf(pRole.id), es = statsOf(eRole.id);
+    G.player = { role: pRole, speed: ps.speed, prog: 0, stm: 80, cool: { hyd: 0, tunt: 0, banana: 0 } };
+    G.enemy = { role: eRole, speed: es.speed, prog: 0, stm: 80, cool: { hyd: 0, tunt: 0, banana: 0 } };
+    G.busy = false; G.guessed = false; G.cheatUsed = false;
+    openMask('gameMask');
+    startRace();
+    log('sys', '⚔️ 在线PK：你和对手同用「' + pRole.name + '」对战，谁先冲线用时短谁赢！');
+  }
+  function pkPoll() {
+    if (PK.timer) clearInterval(PK.timer);
+    PK.timer = setInterval(function () {
+      pkRead().then(function (pk) {
+        pk = pk || {};
+        if (!PK.mode) { clearInterval(PK.timer); return; }
+        /* 等待超时 60 秒 */
+        if (PK.mode === 'wait' && !pk.room && pk.waiting && pk.waiting.uid === me.id && Date.now() - PK.matchSince > 60000) {
+          clearInterval(PK.timer); PK.mode = '';
+          pkWrite(function (p) { if (p.waiting && p.waiting.uid === me.id) p.waiting = null; });
+          showPkBody('<div style="font-size:16px;font-weight:800;color:var(--muted);margin:10px 0;">⏰ 60秒内无人加入</div><div style="font-size:13px;color:var(--muted);">下次再喊上小伙伴一起吧~</div>');
+          document.getElementById('pkOk').style.display = 'none';
+          return;
+        }
+        /* 等待者：对手加入 → 开战 */
+        if (PK.mode === 'wait' && pk.room && (pk.room.p1 === me.id || pk.room.p2 === me.id)) {
+          clearInterval(PK.timer);
+          startPkGame(pk.room);
+          return;
+        }
+        /* 房间内：双方都完成 → 判胜 */
+        if (PK.mode === 'game' && pk.finish && pk.finish[me.id] && pk.room) {
+          var other = pk.room.p1 === me.id ? pk.room.p2 : pk.room.p1;
+          if (other && pk.finish[other]) {
+            clearInterval(PK.timer);
+            var w = pk.finish[me.id] <= pk.finish[other] ? me.id : other;
+            var l = w === me.id ? other : me.id;
+            pkWrite(function (p) { p.finish = null; p.result = { winner: w, loser: l, loot: 0, state: 'loot', t: Date.now() }; });
+            setTimeout(function () {
+              pkRead().then(function (p2) { if (p2 && p2.result) showPkResult(p2.result); });
+            }, 2000);
+            return;
+          }
+        }
+        /* 结果已出 */
+        if (pk.result && (pk.result.winner === me.id || pk.result.loser === me.id)) {
+          clearInterval(PK.timer);
+          showPkResult(pk.result);
+          return;
+        }
+      });
+    }, 3000);
+  }
+  function showPkBody(html) { document.getElementById('pkBody').innerHTML = html; }
+  function showPkResult(res) {
+    PK.mode = 'result';
+    var meWin = res.winner === me.id;
+    openMask('pkMask');
+    document.getElementById('pkTitle').textContent = meWin ? '🏆 PK胜利！' : '😵 PK失败';
+    var okBtn = document.getElementById('pkOk');
+    if (meWin) {
+      if (res.state === 'done') {
+        showPkBody('<div style="font-size:16px;font-weight:800;color:#ffd94d;margin:10px 0;">✅ 已掠夺对方 ' + res.loot + ' 分！</div>' +
+          '<div style="font-size:13px;color:var(--muted);">你的积分 +' + res.loot + '，对手 -' + res.loot + '</div>');
+        okBtn.style.display = 'none';
+      } else {
+        showPkBody('<div style="font-size:16px;font-weight:800;color:#ffd94d;margin:10px 0;">你赢了！掠夺对方积分！</div>' +
+          '<div class="field" style="margin:8px 0;"><label>掠夺积分（1~3分）</label>' +
+          '<select id="pkLoot" style="width:100%;padding:10px;border-radius:10px;background:rgba(255,255,255,.06);color:var(--text);border:1px solid var(--line);">' +
+          '<option value="1">1 分</option><option value="2" selected>2 分</option><option value="3">3 分</option></select></div>');
+        okBtn.style.display = '';
+        okBtn.onclick = function () {
+          var n = parseInt(document.getElementById('pkLoot').value, 10) || 1;
+          applyLoot(res.winner, res.loser, n);
+          pkWrite(function (p) { if (p.result) { p.result.loot = n; p.result.state = 'done'; } });
+          showPkBody('<div style="font-size:16px;font-weight:800;color:#ffd94d;margin:10px 0;">✅ 掠夺完成！</div>' +
+            '<div style="font-size:13px;color:var(--muted);">你 +' + n + ' 分，对方 -' + n + ' 分</div>');
+          okBtn.style.display = 'none';
+          setTimeout(clearPk, 25000);
+        };
+      }
+    } else {
+      if (res.state === 'done') {
+        applyLoot(res.winner, res.loser, res.loot);   // 输者本地同步扣分
+        showPkBody('<div style="font-size:16px;font-weight:800;color:var(--muted);margin:10px 0;">你输了…</div>' +
+          '<div style="font-size:14px;color:#ff6b6b;">对方掠夺了你 <b>' + res.loot + '</b> 分！</div>');
+      } else {
+        showPkBody('<div style="font-size:16px;font-weight:800;color:var(--muted);margin:10px 0;">你输了…</div>' +
+          '<div style="font-size:13px;color:var(--muted);">等待对方选择掠夺积分…</div>');
+      }
+      okBtn.style.display = 'none';
+    }
+  }
+  function applyLoot(winner, loser, n) {
+    state.daily = state.daily || { endAt: null, scores: {} };
+    state.daily.scores = state.daily.scores || {};
+    var w = state.daily.scores[winner] || { n: '', s: 0 };
+    var l = state.daily.scores[loser] || { n: '', s: 0 };
+    if (!w.n) w.n = (state.playerPasses && state.playerPasses[winner] && state.playerPasses[winner].n) || '匿名';
+    if (!l.n) l.n = (state.playerPasses && state.playerPasses[loser] && state.playerPasses[loser].n) || '匿名';
+    w.s = (w.s || 0) + n;
+    l.s = Math.max(0, (l.s || 0) - n);
+    state.daily.scores[winner] = w;
+    state.daily.scores[loser] = l;
+    save();
+  }
+  function clearPk() {
+    pkWrite(function (p) { p.waiting = null; p.room = null; p.result = null; p.finish = null; });
+    PK.mode = '';
+  }
+  document.getElementById('pkEntry').addEventListener('click', function () { if (!ensureNick({ type: 'pk' })) return; window.openPk(); });
+  document.getElementById('pkCancel').addEventListener('click', function () {
+    closeMask('pkMask');
+    if (PK.mode === 'wait') pkWrite(function (p) { if (p.waiting && p.waiting.uid === me.id) p.waiting = null; });
+    if (PK.timer) { clearInterval(PK.timer); PK.timer = null; }
+    PK.mode = '';
+  });
 })();
 </script>
   <!-- ============ 背景音乐 ============ -->
