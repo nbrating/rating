@@ -1249,7 +1249,38 @@ function cfg() {
     draw: (c.draw != null ? c.draw : 55) / 100
   };
 }
-/* 应用云端数据到页面（统一入口） */
+/* 合并本地未同步增量到云端数据（按 id 去重取并集，活跃值取较大分）——防止"投票/游戏分保存后刷新被覆盖丢失" */
+function mergeLocalInto(target) {
+  var local = state;
+  if (!local || local === target || !target.people) return;
+  ['ratings', 'gameLogs', 'comments', 'hits', 'adjustments', 'messages'].forEach(function (k) {
+    if (!target[k] || !local[k]) return;
+    var seen = {};
+    target[k].forEach(function (r) { if (r && r.id) seen[r.id] = 1; });
+    (local[k] || []).forEach(function (r) { if (r && r.id && !seen[r.id]) target[k].push(r); });
+  });
+  ['daily', 'activity'].forEach(function (k) {
+    var lt = local[k], tt = target[k];
+    if (lt && tt && lt.scores && tt.scores) {
+      Object.keys(lt.scores).forEach(function (uid) {
+        var lv = lt.scores[uid];
+        if (!tt.scores[uid] || lv.s > tt.scores[uid].s) tt.scores[uid] = lv;
+      });
+    }
+  });
+  if (target.people && local.people) {
+    var pids = {};
+    target.people.forEach(function (p) { pids[p.id] = 1; });
+    (local.people || []).forEach(function (p) { if (!pids[p.id]) target.people.push(p); });
+  }
+  if (target.playerPasses && local.playerPasses) {
+    Object.keys(local.playerPasses).forEach(function (k) { if (!target.playerPasses[k]) target.playerPasses[k] = local.playerPasses[k]; });
+  }
+  if (target.scoreNotices && local.scoreNotices) {
+    Object.keys(local.scoreNotices).forEach(function (k) { if (!target.scoreNotices[k]) target.scoreNotices[k] = local.scoreNotices[k]; });
+  }
+}
+/* 应用云端数据到页面（统一入口；先把本地未同步增量合并进来，绝不覆盖玩家已产生的数据） */
 function applyRemote(remote) {
   var remoteEmpty = !remote.people || remote.people.length === 0;
   var localHas = state.people && state.people.length > 0;
@@ -1261,11 +1292,14 @@ function applyRemote(remote) {
     saveLocal(); scheduleCloudSave();
     refresh();
   } else {
-    state = normalizeState(remote);              // 云端为准
+    var merged = normalizeState(remote);
+    mergeLocalInto(merged);                      // 关键：合并本地未同步增量，防止丢分
+    state = merged;                              // 云端 + 本地增量合并结果为准
     autoCleanup();                               // 后台记录每5天自动清理（只清投票/游戏记录）
     settleDaily();                               // 每日榜 24h 轮换检查
     settleActivity();                            // 到点自动结算活跃榜
     saveLocal();
+    scheduleCloudSave();                         // 把本地未同步增量补传云端（防丢分）
     refresh();
     checkScoreNotice();                          // 被管理员调分 → 弹窗提示
   }
@@ -1273,7 +1307,7 @@ function applyRemote(remote) {
 /* 页面加载：优先 api.github.com（实时、带 token 5000 次/小时），30 秒节流缓存；失败再走 GitHub Pages CDN（不限流兜底） */
 function cloudLoad() {
   var now = Date.now();
-  if (CLOUD.cache && now - CLOUD.cache.t < CLOUD.cacheMs) {   // 30 秒缓存：不重复拉取，防限流
+  if (CLOUD.cache && now - CLOUD.cache.t < CLOUD.cacheMs && !CLOUD.queue) {   // 30 秒缓存：不重复拉取，防限流（有待保存则跳过缓存，先上传）
     applyRemote(CLOUD.cache.data);
     return;
   }
@@ -1389,7 +1423,12 @@ function doCloudSave() {
     fetch(CLOUD.api, { method: 'PUT', headers: cloudHeaders(), body: body })
       .then(function (r) { return r.json(); })
       .then(function (d) {
-        if (d.content) { CLOUD.sha = d.content.sha; CLOUD.tryCount = 0; return; }
+        if (d.content) {
+          CLOUD.sha = d.content.sha;
+          CLOUD.tryCount = 0;
+          CLOUD.cache = { t: Date.now(), data: JSON.parse(JSON.stringify(state)) };   // 保存成功 → 刷新缓存（防止旧缓存覆盖新数据）
+          return;
+        }
         var msg = d.message || '';
         if (/sha|version|conflict/i.test(msg)) {
           // 版本冲突（别人刚写过）：取最新版本号后重存，最多 3 次
@@ -2510,15 +2549,20 @@ function renderLogs(tab) {
     var scoresM = (state.daily && state.daily.scores) || {};   // 玩家管理按每日榜排序（主榜）
     var passesM = state.playerPasses || {};
     var pmap = {};
+    var nickOf = function (uid) {                  // 优先真实昵称：密码表 → 活跃榜 → 记录
+      var n = (passesM[uid] && passesM[uid].n) || (scoresM[uid] && scoresM[uid].n) || '';
+      return n && n !== '匿名' ? n : '';
+    };
     Object.keys(passesM).forEach(function (k) {
-      pmap[k] = { nick: passesM[k].n || '匿名', s: (scoresM[k] && scoresM[k].s) || 0, p: passesM[k].p || '' };
+      pmap[k] = { nick: nickOf(k) || '匿名', s: (scoresM[k] && scoresM[k].s) || 0, p: passesM[k].p || '' };
     });
     Object.keys(scoresM).forEach(function (k) {
-      if (!pmap[k]) pmap[k] = { nick: scoresM[k].n || '匿名', s: scoresM[k].s || 0, p: '' };
+      if (!pmap[k]) pmap[k] = { nick: nickOf(k) || '匿名', s: scoresM[k].s || 0, p: '' };
+      else if (!pmap[k].nick || pmap[k].nick === '匿名') pmap[k].nick = nickOf(k) || pmap[k].nick;
     });
     /* 追加所有"注册过名字"的玩家（评过级 / 评论过 / 设过密码 / 有活跃值的都算） */
     state.ratings.concat(state.comments).forEach(function (r) {
-      if (r && r.userId && !pmap[r.userId]) pmap[r.userId] = { nick: r.nick || '匿名', s: 0, p: '' };
+      if (r && r.userId && !pmap[r.userId]) pmap[r.userId] = { nick: (r.nick && r.nick !== '匿名' ? r.nick : (nickOf(r.userId) || '匿名')), s: 0, p: '' };
     });
     var plist = Object.keys(pmap).map(function (k) { return { id: k, nick: pmap[k].nick, s: pmap[k].s, p: pmap[k].p }; })
       .sort(function (a, b) { return b.s - a.s; });
