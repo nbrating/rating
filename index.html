@@ -550,8 +550,8 @@ if (!location.search.match(/[?&]v=\d+/)) {
   .battle-log .en { color: #ff6b7a; }
   .battle-log .sys { color: var(--gold); }
   @keyframes logIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
-  .battle-acts { display: flex; gap: 8px; margin-top: 10px; }
-  .battle-acts .btn { height: 44px; font-size: 14px; }
+  .battle-acts { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  .battle-acts .btn { height: 44px; font-size: 14px; flex: 1 1 44%; }
   .btn.atk { background: linear-gradient(90deg, var(--accent), #4dd8ff); }
   .btn.hvy { background: linear-gradient(90deg, #ffb300, #ff5fa2); color: #0d0f14; }
   .btn.heal { background: linear-gradient(90deg, #2bff88, #7dffb0); color: #0d0f14; }
@@ -657,6 +657,8 @@ if (!location.search.match(/[?&]v=\d+/)) {
   .btn.spr { background: linear-gradient(90deg, var(--accent), #4dd8ff); }
   .btn.bst { background: linear-gradient(90deg, #ffb300, #ff5fa2); color: #0d0f14; }
   .btn.hyd { background: linear-gradient(90deg, #2bff88, #7dffb0); color: #0d0f14; }
+  .btn.tunt { background: linear-gradient(90deg, #b16bff, #ff5fa2); color: #fff; }
+  .btn.banana { background: linear-gradient(90deg, #ffd94d, #ffb300); color: #0d0f14; }
   /* 猜拳环节 */
   .rps-row { display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
   .rps-label { font-size: 11px; color: var(--muted); width: 100%; text-align: center; margin-bottom: 4px; }
@@ -3114,8 +3116,8 @@ window.__openMsg = openMsgModal;
       }
     }
     var ps = statsOf(pRole.id), es = statsOf(eRole.id);
-    G.player = { role: pRole, speed: ps.speed, prog: 0, stm: 80, cool: { hyd: 0 } };
-    G.enemy = { role: eRole, speed: es.speed, prog: 0, stm: 80, cool: { hyd: 0 } };
+    G.player = { role: pRole, speed: ps.speed, prog: 0, stm: 80, cool: { hyd: 0, tunt: 0, banana: 0 } };
+    G.enemy = { role: eRole, speed: es.speed, prog: 0, stm: 80, cool: { hyd: 0, tunt: 0, banana: 0 } };
     G.busy = false;
     G.guessed = false;
     G.cheatUsed = false;
@@ -3165,6 +3167,8 @@ window.__openMsg = openMsgModal;
       '<button class="btn spr" data-a="spr">🏃 冲刺</button>' +
       '<button class="btn bst" data-a="bst">💥 爆发冲刺</button>' +
       '<button class="btn hyd" data-a="hyd">🧋 补水</button>' +
+      '<button class="btn tunt" data-a="tunt">👻 嘲讽</button>' +
+      '<button class="btn banana" data-a="banana">🍌 香蕉皮</button>' +
       '</div>';
     document.getElementById('bActs').addEventListener('click', function (ev) {
       var btn = ev.target.closest('[data-a]');
@@ -3356,8 +3360,42 @@ window.__openMsg = openMsgModal;
       p.stm = Math.min(100, p.stm + 30);
       p.cool.hyd = 2;
       log('pl', '🧋 吨吨吨补水，体力 +30（边跑边喝前进了 ' + Math.round(base * .6) + ' 米）');
+    } else if (a === 'tunt') {
+      if (p.cool.tunt > 0) { log('sys', '刚嘲讽过，等' + p.cool.tunt + '回合再嘲讽'); refreshRace(); return; }
+      var roll = Math.random();
+      if (roll < .35) {
+        var td = Math.round(base * .8);
+        e.prog = Math.max(0, e.prog - td);
+        runnerFx('e', 'slip');
+        log('en', '🤡 你的嘲讽让机器人气到原地打转，倒退了 ' + td + ' 米！');
+        infoPop('🤡 嘲讽成功！机器人气炸了！');
+      } else if (roll < .7) {
+        var tb = Math.round(base * rnd(3, 3.6));
+        e.prog += tb;
+        runnerFx('e', 'boost');
+        log('en', '😱 嘲讽过头！机器人暴走狂飙！前进了 ' + tb + ' 米！');
+        infoPop('😱 嘲讽失败！机器人暴走了！');
+      } else {
+        log('en', '😑 机器人面无表情，无视了你的嘲讽');
+      }
+      p.cool.tunt = 3;
+    } else if (a === 'banana') {
+      if (p.cool.banana > 0) { log('sys', '刚扔过香蕉皮，等' + p.cool.banana + '回合再扔'); refreshRace(); return; }
+      if (Math.random() < .7) {
+        var bd = Math.round(base * rnd(1, 1.5));
+        e.prog = Math.max(0, e.prog - bd);
+        runnerFx('e', 'slip');
+        log('en', '🍌 一根香蕉皮！机器人踩到滑倒，倒退了 ' + bd + ' 米！');
+        infoPop('🍌 香蕉皮偷袭成功！');
+      } else {
+        log('en', '🤸 机器人一个后空翻躲过了香蕉皮！');
+        infoPop('🤸 被躲过了！');
+      }
+      p.cool.banana = 3;
     }
     p.cool.hyd = Math.max(0, p.cool.hyd - 1);
+    if (p.cool.tunt) p.cool.tunt = Math.max(0, p.cool.tunt - 1);
+    if (p.cool.banana) p.cool.banana = Math.max(0, p.cool.banana - 1);
     if (Math.random() < .08) randomEvent('p');
     refreshRace();
     if (p.prog >= 100) { endGame(true); return; }
@@ -3399,8 +3437,8 @@ window.__openMsg = openMsgModal;
     G.busy = false;
   }
   function resetRace() {
-    G.player.prog = 0; G.player.stm = 80; G.player.cool.hyd = 0;
-    G.enemy.prog = 0; G.enemy.stm = 80; G.enemy.cool.hyd = 0;
+    G.player.prog = 0; G.player.stm = 80; G.player.cool = { hyd: 0, tunt: 0, banana: 0 };
+    G.enemy.prog = 0; G.enemy.stm = 80; G.enemy.cool = { hyd: 0, tunt: 0, banana: 0 };
     G.busy = false; G.guessed = false;
     closeRps();
     startRace();
